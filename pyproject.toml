@@ -1,0 +1,58 @@
+[project]
+name = "netz-noe-smartmeter"
+version = "0.1.0"
+description = "Home Assistant custom integration for Netz NÖ Smart Meter"
+license = "MIT"
+requires-python = ">=3.13.2"
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-homeassistant-custom-component==0.13.316",
+    "ruff",
+    "codespell",
+    "pre-commit",
+    "basedpyright",
+    "pytest-cov",
+]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "RUF", # ruff-specific
+    "SLF", # flake8-self
+    "LOG", # flake8-logging
+    "T20", # flake8-print
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["SLF001"]  # Private member access is normal in tests
+
+[tool.ruff.lint.isort]
+known-first-party = ["custom_components.netz_noe_smartmeter"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["custom_components/netz_noe_smartmeter"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 0
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+]

@@ -1,0 +1,36 @@
+{
+  "venvPath": ".",
+  "venv": ".venv",
+  "extraPaths": ["custom_components"],
+  "pythonVersion": "3.13",
+  "typeCheckingMode": "recommended",
+  "failOnWarnings": true,
+  "reportAny": "error",
+  "reportImplicitOverride": "error",
+  "reportIncompatibleVariableOverride": "error",
+  "reportInvalidCast": "error",
+  "reportUnannotatedClassAttribute": "error",
+  "reportUnknownArgumentType": "error",
+  "reportUnknownMemberType": "error",
+  "reportUnknownVariableType": "error",
+  "executionEnvironments": [
+    {
+      "root": "tests",
+      "extraPaths": [".", "custom_components"],
+      "reportUnknownArgumentType": "none",
+      "reportUnknownLambdaType": "none",
+      "reportUnknownMemberType": "none",
+      "reportUnknownParameterType": "none",
+      "reportUnknownVariableType": "none",
+      "reportUnusedCallResult": "none",
+      "reportUnusedParameter": "none",
+      "reportMissingParameterType": "none",
+      "reportPrivateUsage": "none",
+      "reportMissingTypeStubs": "none",
+      "reportUnusedFunction": "none",
+      "reportMissingTypeArgument": "none",
+      "reportTypedDictNotRequiredAccess": "none",
+      "reportAny": "none"
+    }
+  ]
+}

@@ -1,0 +1,84 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Netz NÖ Smart Meter",
+        "description": "Enter your smartmeter.netz-noe.at credentials and meter ID.",
+        "data": {
+          "username": "Username",
+          "password": "Password",
+          "meter_id": "Meter ID (Zählpunkt)"
+        },
+        "data_description": {
+          "meter_id": "Your meter ID starting with AT00200..., found on your invoice or in the smart meter portal."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate Netz NÖ Smart Meter",
+        "description": "Your session has expired. Please enter your updated credentials.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to smartmeter.netz-noe.at",
+      "invalid_auth": "Invalid username or password",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "This meter is already configured",
+      "reauth_successful": "Re-authentication successful",
+      "unique_id_mismatch": "The meter ID does not match the existing entry"
+    }
+  },
+  "entity": {
+    "button": {
+      "refresh": {
+        "name": "Refresh data"
+      }
+    },
+    "sensor": {
+      "daily_consumption": {
+        "name": "Daily consumption"
+      },
+      "weekly_consumption": {
+        "name": "Weekly consumption"
+      },
+      "monthly_consumption": {
+        "name": "Monthly consumption"
+      },
+      "yearly_consumption": {
+        "name": "Yearly consumption"
+      },
+      "last_updated": {
+        "name": "Last updated"
+      },
+      "backfill_status": {
+        "name": "Backfill status"
+      }
+    }
+  },
+  "system_health": {
+    "info": {
+      "can_reach_server": "Reach Netz NÖ portal"
+    }
+  },
+  "services": {
+    "backfill_statistics": {
+      "name": "Backfill statistics",
+      "description": "Import historical 15-minute smart meter data into Home Assistant statistics. Existing statistics from this integration are cleared before import. Progress is shown by the Backfill status sensor.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Meter configuration",
+          "description": "Select which configured meter to backfill. Required if multiple meters are configured."
+        },
+        "start_year": {
+          "name": "Start year",
+          "description": "Year to start backfill from, for example 2023. If omitted, the earliest available year is auto-detected."
+        }
+      }
+    }
+  }
+}

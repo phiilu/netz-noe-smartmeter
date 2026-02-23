@@ -1,0 +1,84 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Netz NÖ Smart Meter",
+        "description": "Gib deine smartmeter.netz-noe.at Zugangsdaten und Zählpunktnummer ein.",
+        "data": {
+          "username": "Benutzername",
+          "password": "Passwort",
+          "meter_id": "Zählpunkt"
+        },
+        "data_description": {
+          "meter_id": "Deine Zählpunktnummer beginnend mit AT00200..., zu finden auf der Rechnung oder im Smart Meter Portal."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Netz NÖ Smart Meter erneut authentifizieren",
+        "description": "Deine Sitzung ist abgelaufen. Bitte gib deine aktualisierten Zugangsdaten ein.",
+        "data": {
+          "username": "Benutzername",
+          "password": "Passwort"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbindung zu smartmeter.netz-noe.at fehlgeschlagen",
+      "invalid_auth": "Benutzername oder Passwort ungültig",
+      "unknown": "Unerwarteter Fehler"
+    },
+    "abort": {
+      "already_configured": "Dieser Zähler ist bereits konfiguriert",
+      "reauth_successful": "Erneute Authentifizierung erfolgreich",
+      "unique_id_mismatch": "Die Zählpunktnummer stimmt nicht mit dem bestehenden Eintrag überein"
+    }
+  },
+  "entity": {
+    "button": {
+      "refresh": {
+        "name": "Daten aktualisieren"
+      }
+    },
+    "sensor": {
+      "daily_consumption": {
+        "name": "Tagesverbrauch"
+      },
+      "weekly_consumption": {
+        "name": "Wochenverbrauch"
+      },
+      "monthly_consumption": {
+        "name": "Monatsverbrauch"
+      },
+      "yearly_consumption": {
+        "name": "Jahresverbrauch"
+      },
+      "last_updated": {
+        "name": "Letztes Update"
+      },
+      "backfill_status": {
+        "name": "Datenimport-Status"
+      }
+    }
+  },
+  "system_health": {
+    "info": {
+      "can_reach_server": "Netz NÖ Portal erreichbar"
+    }
+  },
+  "services": {
+    "backfill_statistics": {
+      "name": "Statistiken nachladen",
+      "description": "Importiert historische 15-Minuten-Smart-Meter-Daten in die Home Assistant Statistiken. Bestehende Statistiken dieser Integration werden davor gelöscht. Der Fortschritt wird im Sensor Datenimport-Status angezeigt.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Zähler-Konfiguration",
+          "description": "Wähle, für welchen konfigurierten Zähler ein Nachladen erfolgen soll. Erforderlich, wenn mehrere Zähler konfiguriert sind."
+        },
+        "start_year": {
+          "name": "Startjahr",
+          "description": "Jahr, ab dem nachgeladen werden soll, zum Beispiel 2023. Wenn leer, wird das früheste verfügbare Jahr automatisch erkannt."
+        }
+      }
+    }
+  }
+}

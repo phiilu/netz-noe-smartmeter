@@ -1,0 +1,12 @@
+services:
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:2026.2.3
+    container_name: ha-dev
+    ports:
+      - "8124:8123"
+    volumes:
+      - ./ha-dev-config:/config
+      - ./custom_components/netz_noe_smartmeter:/config/custom_components/netz_noe_smartmeter:ro
+    environment:
+      - TZ=Europe/Vienna
+    restart: "no"
