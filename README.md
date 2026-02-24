@@ -36,9 +36,10 @@ Reads your electricity consumption from the Netz NÖ smart meter portal and make
 
 ### HACS (recommended)
 
-1. Add this repository as a custom repository in HACS
+1. Open **HACS -> Integrations**
 2. Search for "Netz NÖ Smart Meter" and install it
 3. Restart Home Assistant
+4. If it is not listed yet, add this repository as a custom repository using the button below
 
 [![Install with HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=phiilu&repository=netz-noe-smartmeter&category=integration)
 
