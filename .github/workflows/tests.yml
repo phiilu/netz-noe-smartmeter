@@ -6,7 +6,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   tests:
@@ -30,8 +29,10 @@ jobs:
       - name: Run tests with coverage
         run: uv run pytest tests/ --cov=custom_components/netz_noe_smartmeter --cov-report=term --cov-report=xml
 
-      - name: Upload coverage to Codecov
+      - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5
         with:
-          use_oidc: true
+          token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage.xml
+          fail_ci_if_error: true
+          verbose: true
