@@ -1,11 +1,11 @@
 # Netz NÖ Smart Meter
 
-[![Install with HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=phiilu&repository=netz-noe-smartmeter&category=integration)
-![Hassfest](https://github.com/phiilu/netz-noe-smartmeter/actions/workflows/hassfest.yml/badge.svg)
-![HACS Validate](https://github.com/phiilu/netz-noe-smartmeter/actions/workflows/hacs.yml/badge.svg)
-![Tests](https://github.com/phiilu/netz-noe-smartmeter/actions/workflows/tests.yml/badge.svg)
-[![Coverage](https://codecov.io/gh/phiilu/netz-noe-smartmeter/graph/badge.svg)](https://codecov.io/gh/phiilu/netz-noe-smartmeter)
-![GitHub Release](https://img.shields.io/github/v/release/phiilu/netz-noe-smartmeter)
+[![HACS](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://www.hacs.xyz/)
+[![Release](https://img.shields.io/github/v/release/phiilu/netz-noe-smartmeter)](https://github.com/phiilu/netz-noe-smartmeter/releases)
+[![Tests](https://github.com/phiilu/netz-noe-smartmeter/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/phiilu/netz-noe-smartmeter/actions/workflows/tests.yml)
+[![Hassfest](https://github.com/phiilu/netz-noe-smartmeter/actions/workflows/hassfest.yml/badge.svg?branch=main)](https://github.com/phiilu/netz-noe-smartmeter/actions/workflows/hassfest.yml)
+[![HACS Validate](https://github.com/phiilu/netz-noe-smartmeter/actions/workflows/hacs.yml/badge.svg?branch=main)](https://github.com/phiilu/netz-noe-smartmeter/actions/workflows/hacs.yml)
+[![Coverage](https://codecov.io/gh/phiilu/netz-noe-smartmeter/graph/badge.svg?branch=main)](https://codecov.io/gh/phiilu/netz-noe-smartmeter)
 
 **Unofficial** Home Assistant custom integration for reading smart meter data from the [Netz Niederösterreich](https://www.netz-noe.at) (Netz NÖ) customer portal.
 
@@ -39,6 +39,8 @@ Reads your electricity consumption from the Netz NÖ smart meter portal and make
 1. Add this repository as a custom repository in HACS
 2. Search for "Netz NÖ Smart Meter" and install it
 3. Restart Home Assistant
+
+[![Install with HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=phiilu&repository=netz-noe-smartmeter&category=integration)
 
 ### Manual
 
