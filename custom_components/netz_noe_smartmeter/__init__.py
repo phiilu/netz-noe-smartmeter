@@ -29,6 +29,7 @@ from .statistics import async_backfill_statistics
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [Platform.BUTTON, Platform.SENSOR]
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 SERVICE_BACKFILL = "backfill_statistics"
 ATTR_CONFIG_ENTRY_ID = "config_entry_id"
