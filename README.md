@@ -1,5 +1,12 @@
 # Netz NÖ Smart Meter
 
+[![Install with HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=phiilu&repository=netz-noe-smartmeter&category=integration)
+![Hassfest](https://github.com/phiilu/netz-noe-smartmeter/actions/workflows/hassfest.yml/badge.svg)
+![HACS Validate](https://github.com/phiilu/netz-noe-smartmeter/actions/workflows/hacs.yml/badge.svg)
+![Tests](https://github.com/phiilu/netz-noe-smartmeter/actions/workflows/tests.yml/badge.svg)
+[![Coverage](https://codecov.io/gh/phiilu/netz-noe-smartmeter/graph/badge.svg)](https://codecov.io/gh/phiilu/netz-noe-smartmeter)
+![GitHub Release](https://img.shields.io/github/v/release/phiilu/netz-noe-smartmeter)
+
 **Unofficial** Home Assistant custom integration for reading smart meter data from the [Netz Niederösterreich](https://www.netz-noe.at) (Netz NÖ) customer portal.
 
 > **Disclaimer:** This project is not affiliated with, endorsed by, or connected to EVN AG, Netz Niederösterreich GmbH, or any of their subsidiaries. All product names, trademarks, and registered trademarks are property of their respective owners. Use at your own risk.
@@ -22,8 +29,8 @@ Reads your electricity consumption from the Netz NÖ smart meter portal and make
 ## Requirements
 
 - A Netz NÖ smart meter with portal access at [smartmeter.netz-noe.at](https://smartmeter.netz-noe.at)
-- Your portal username and password
-- Your meter ID (Zählpunkt), starting with `AT00200...` (found on your invoice or in the portal)
+- Your portal username and password from [smartmeter.netz-noe.at login](https://smartmeter.netz-noe.at/#/login?)
+- Your Austrian meter ID (Zaehlpunkt), 33 characters starting with `AT` (found on your invoice or in the portal)
 
 ## Installation
 
