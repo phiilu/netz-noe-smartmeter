@@ -1,0 +1,66 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "labels": [
+    "dependencies"
+  ],
+  "timezone": "Europe/Vienna",
+  "ignorePaths": [
+    "ha-dev-config/**"
+  ],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": [
+      "before 6am on monday"
+    ]
+  },
+  "packageRules": [
+    {
+      "matchDatasources": [
+        "pypi"
+      ],
+      "groupName": "python packages"
+    },
+    {
+      "matchManagers": [
+        "github-actions"
+      ],
+      "groupName": "github actions"
+    },
+    {
+      "matchManagers": [
+        "pre-commit"
+      ],
+      "groupName": "pre-commit"
+    },
+    {
+      "matchDepTypes": [
+        "dev"
+      ],
+      "groupName": "python dev dependencies"
+    },
+    {
+      "matchUpdateTypes": [
+        "patch"
+      ],
+      "matchManagers": [
+        "pep621",
+        "uv",
+        "github-actions",
+        "pre-commit"
+      ],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    },
+    {
+      "matchUpdateTypes": [
+        "patch"
+      ],
+      "matchCurrentVersion": "/^0\\./",
+      "automerge": false
+    }
+  ]
+}
