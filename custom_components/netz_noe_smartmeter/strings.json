@@ -10,7 +10,7 @@
           "meter_id": "Meter ID (Zählpunkt)"
         },
         "data_description": {
-          "meter_id": "Your meter ID starting with AT00200..., found on your invoice or in the smart meter portal."
+          "meter_id": "Your Austrian meter ID (Zaehlpunkt), 33 characters starting with AT. Dots and spaces are allowed."
         }
       },
       "reauth_confirm": {
@@ -24,6 +24,7 @@
     },
     "error": {
       "cannot_connect": "Failed to connect to smartmeter.netz-noe.at",
+      "invalid_meter_id": "Invalid meter ID format",
       "invalid_auth": "Invalid username or password",
       "unknown": "Unexpected error"
     },

@@ -11,7 +11,12 @@ from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.netz_noe_smartmeter.api import NetzNoeApiError, NetzNoeAuthError
-from custom_components.netz_noe_smartmeter.config_flow import NetzNoeConfigFlow, validate_input
+from custom_components.netz_noe_smartmeter.config_flow import (
+    NetzNoeConfigFlow,
+    is_valid_austrian_meter_id,
+    normalize_meter_id,
+    validate_input,
+)
 from custom_components.netz_noe_smartmeter.const import CONF_METER_ID, DOMAIN
 
 from .conftest import MOCK_CONFIG_DATA, MOCK_METER_ID
@@ -74,6 +79,16 @@ async def test_user_flow_unknown_error(hass: HomeAssistant) -> None:
     assert result["errors"] == {"base": "unknown"}  # type: ignore[typeddict-item]
 
 
+def test_meter_id_validation_helpers() -> None:
+    """Test meter ID normalization and format validation helpers."""
+    raw = "at.0020 000000000000001000000654321"
+    normalized = normalize_meter_id(raw)
+    assert normalized == MOCK_METER_ID
+    assert is_valid_austrian_meter_id(normalized) is True
+    assert is_valid_austrian_meter_id("AT0020") is False
+    assert is_valid_austrian_meter_id("DE0020000000000000001000000654321") is False
+
+
 async def test_validate_input_success(hass: HomeAssistant) -> None:
     """Test validate_input performs login/logout and returns title."""
     session = MagicMock()
@@ -122,6 +137,39 @@ async def test_user_flow_invalid_input_types(hass: HomeAssistant) -> None:
 
     assert result["type"] is FlowResultType.FORM  # type: ignore[typeddict-item]
     assert result["errors"] == {"base": "unknown"}  # type: ignore[typeddict-item]
+
+
+async def test_user_flow_invalid_meter_id(hass: HomeAssistant) -> None:
+    """Test config flow rejects invalid meter ID format."""
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            "username": "user@example.com",
+            "password": "secret",
+            CONF_METER_ID: "AT0020",
+        },
+    )
+
+    assert result["type"] is FlowResultType.FORM  # type: ignore[typeddict-item]
+    assert result["errors"] == {"base": "invalid_meter_id"}  # type: ignore[typeddict-item]
+
+
+async def test_user_flow_normalizes_meter_id_before_create(hass: HomeAssistant) -> None:
+    """Test config flow normalizes meter ID separators and casing."""
+    with patch(PATCH_VALIDATE, return_value={"title": "Smart Meter 0000654321"}):
+        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                "username": "user@example.com",
+                "password": "secret",
+                CONF_METER_ID: "at.0020 000000000000001000000654321",
+            },
+        )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY  # type: ignore[typeddict-item]
+    assert result["data"][CONF_METER_ID] == MOCK_METER_ID  # type: ignore[typeddict-item]
 
 
 async def test_user_flow_duplicate_meter(hass: HomeAssistant) -> None:

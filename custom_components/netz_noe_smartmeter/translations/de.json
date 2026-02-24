@@ -10,7 +10,7 @@
           "meter_id": "Zählpunkt"
         },
         "data_description": {
-          "meter_id": "Deine Zählpunktnummer beginnend mit AT00200..., zu finden auf der Rechnung oder im Smart Meter Portal."
+          "meter_id": "Deine oesterreichische Zaehlpunktnummer mit 33 Zeichen beginnend mit AT. Punkte und Leerzeichen sind erlaubt."
         }
       },
       "reauth_confirm": {
@@ -24,6 +24,7 @@
     },
     "error": {
       "cannot_connect": "Verbindung zu smartmeter.netz-noe.at fehlgeschlagen",
+      "invalid_meter_id": "Ungueltiges Zaehlpunktformat",
       "invalid_auth": "Benutzername oder Passwort ungültig",
       "unknown": "Unerwarteter Fehler"
     },

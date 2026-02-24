@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, cast, override
 
 import aiohttp
@@ -15,6 +16,7 @@ from .api import NetzNoeApi, NetzNoeApiError, NetzNoeAuthError
 from .const import CONF_METER_ID, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
+METER_ID_PATTERN = re.compile(r"^AT[A-Z0-9]{31}$")
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
@@ -39,6 +41,20 @@ async def validate_input(_hass: HomeAssistant, data: dict[str, str]) -> dict[str
     return {"title": f"Smart Meter {short_id}"}
 
 
+def normalize_meter_id(meter_id: str) -> str:
+    """Normalize a meter ID by removing separators and uppercasing."""
+    return meter_id.replace(".", "").replace(" ", "").upper()
+
+
+def is_valid_austrian_meter_id(meter_id: str) -> bool:
+    """Validate an Austrian meter ID format.
+
+    Austrian meter IDs (Zaehlpunktbezeichnung) are 33 characters long and start with AT.
+    """
+    normalized = normalize_meter_id(meter_id)
+    return bool(METER_ID_PATTERN.match(normalized))
+
+
 class NetzNoeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Netz NÖ Smart Meter."""
 
@@ -60,10 +76,19 @@ class NetzNoeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not (isinstance(username_raw, str) and isinstance(password_raw, str) and isinstance(meter_id_raw, str)):
                 errors["base"] = "unknown"
             else:
+                normalized_meter_id = normalize_meter_id(meter_id_raw)
+                if not is_valid_austrian_meter_id(normalized_meter_id):
+                    errors["base"] = "invalid_meter_id"
+                    return self.async_show_form(
+                        step_id="user",
+                        data_schema=STEP_USER_DATA_SCHEMA,
+                        errors=errors,
+                    )
+
                 validated_input: dict[str, str] = {
                     CONF_USERNAME: username_raw,
                     CONF_PASSWORD: password_raw,
-                    CONF_METER_ID: meter_id_raw,
+                    CONF_METER_ID: normalized_meter_id,
                 }
 
                 # Prevent duplicate entries for the same meter
