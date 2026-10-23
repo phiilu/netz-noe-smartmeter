@@ -50,6 +50,14 @@
       "groupName": "python dev dependencies"
     },
     {
+      "description": "Dev HA image and test harness pin the same Home Assistant version, update together",
+      "matchPackageNames": [
+        "ghcr.io/home-assistant/home-assistant",
+        "pytest-homeassistant-custom-component"
+      ],
+      "groupName": "home assistant"
+    },
+    {
       "matchUpdateTypes": [
         "patch"
       ],
