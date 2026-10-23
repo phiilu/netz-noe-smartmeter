@@ -31,7 +31,7 @@ from .api import NetzNoeApi
 from .const import DOMAIN
 from .coordinator import NetzNoeCoordinator
 from .sensor import SIGNAL_BACKFILL_PROGRESS
-from .statistics import async_backfill_statistics
+from .statistics import async_backfill_statistics, async_migrate_legacy_statistics
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -172,6 +172,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: NetzNoeConfigEntry) -> b
     entry.runtime_data = coordinator
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Must finish before the first statistics import below writes to the new ID
+    await async_migrate_legacy_statistics(hass, coordinator.meter_id)
 
     # Schedule a full refresh (including raw data + statistics) now that setup is done
     _ = hass.async_create_task(coordinator.async_request_refresh())

@@ -7,11 +7,20 @@ from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from homeassistant.components.recorder.models import StatisticData
+from homeassistant.components.recorder.statistics import (
+    StatisticsRow,
+    async_add_external_statistics,
+    statistics_during_period,
+)
 from homeassistant.core import HomeAssistant
+from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.components.recorder.common import async_wait_recording_done
 
 from custom_components.netz_noe_smartmeter.api import NetzNoeApiError, NetzNoeRateLimitError, RawRecord
+from custom_components.netz_noe_smartmeter.const import DOMAIN
 from custom_components.netz_noe_smartmeter.statistics import (
-    STATISTIC_ID,
+    LEGACY_STATISTIC_ID,
     _aggregate_to_hourly,
     _build_metadata,
     _detect_earliest_data,
@@ -19,20 +28,40 @@ from custom_components.netz_noe_smartmeter.statistics import (
     _parse_raw_to_intervals,
     async_backfill_statistics,
     async_import_raw_statistics,
+    async_migrate_legacy_statistics,
+    statistic_id_for,
 )
+
+from .conftest import MOCK_METER_ID
+
+STATISTIC_ID = statistic_id_for("meter1")
 
 # ---------------------------------------------------------------------------
 # _build_metadata
 # ---------------------------------------------------------------------------
 
 
-def test_build_metadata() -> None:
+def test_build_metadata(hass: HomeAssistant) -> None:
     """Test that metadata is built correctly."""
-    meta = _build_metadata()
+    meta = _build_metadata(hass, MOCK_METER_ID)
     assert meta["source"] == "netz_noe_smartmeter"
-    assert meta["statistic_id"] == "netz_noe_smartmeter:grid_consumption"
+    assert meta["statistic_id"] == "netz_noe_smartmeter:at0020000000000000001000000654321"
+    assert meta["name"] == f"Smart Meter {MOCK_METER_ID}"
     assert meta["has_sum"] is True
     assert meta["unit_of_measurement"] == "kWh"
+
+
+def test_build_metadata_uses_entry_title(hass: HomeAssistant) -> None:
+    """Test that the statistic is named after the (renamable) config entry title."""
+    MockConfigEntry(domain=DOMAIN, unique_id=MOCK_METER_ID, title="Einspeisung").add_to_hass(hass)
+    assert _build_metadata(hass, MOCK_METER_ID)["name"] == "Einspeisung"
+
+
+def test_statistic_id_unique_per_meter() -> None:
+    """Test that each meter gets its own statistic ID (issue #4)."""
+    assert statistic_id_for("AT0020000000000000001000000000001") != statistic_id_for(
+        "AT0020000000000000001000000000002"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +180,7 @@ async def test_get_last_sum_and_end_no_stats(hass: HomeAssistant) -> None:
     """Test returns (0, None) when no existing statistics."""
     with patch(PATCH_GET_INSTANCE) as mock_inst:
         mock_inst.return_value.async_add_executor_job = AsyncMock(return_value={})
-        running_sum, last_end = await _get_last_sum_and_end(hass)
+        running_sum, last_end = await _get_last_sum_and_end(hass, STATISTIC_ID)
 
     assert running_sum == Decimal(0)
     assert last_end is None
@@ -164,7 +193,7 @@ async def test_get_last_sum_and_end_with_float_end(hass: HomeAssistant) -> None:
     }
     with patch(PATCH_GET_INSTANCE) as mock_inst:
         mock_inst.return_value.async_add_executor_job = AsyncMock(return_value=last_stats)
-        running_sum, last_end = await _get_last_sum_and_end(hass)
+        running_sum, last_end = await _get_last_sum_and_end(hass, STATISTIC_ID)
 
     assert running_sum == Decimal("123.456")
     assert last_end is not None
@@ -179,7 +208,7 @@ async def test_get_last_sum_and_end_with_datetime_end(hass: HomeAssistant) -> No
     }
     with patch(PATCH_GET_INSTANCE) as mock_inst:
         mock_inst.return_value.async_add_executor_job = AsyncMock(return_value=last_stats)
-        running_sum, last_end = await _get_last_sum_and_end(hass)
+        running_sum, last_end = await _get_last_sum_and_end(hass, STATISTIC_ID)
 
     assert running_sum == Decimal("50.0")
     assert last_end is end_dt
@@ -192,7 +221,7 @@ async def test_get_last_sum_and_end_no_sum_value(hass: HomeAssistant) -> None:
     }
     with patch(PATCH_GET_INSTANCE) as mock_inst:
         mock_inst.return_value.async_add_executor_job = AsyncMock(return_value=last_stats)
-        running_sum, last_end = await _get_last_sum_and_end(hass)
+        running_sum, last_end = await _get_last_sum_and_end(hass, STATISTIC_ID)
 
     assert running_sum == Decimal(0)
     assert last_end is not None
@@ -224,7 +253,7 @@ async def test_import_raw_empty_records(hass: HomeAssistant) -> None:
     with patch(PATCH_GET_INSTANCE) as mock_inst:
         mock_inst.return_value.async_add_executor_job = AsyncMock(return_value={})
         with patch(PATCH_ADD_STATS) as mock_add:
-            await async_import_raw_statistics(hass, [])
+            await async_import_raw_statistics(hass, "meter1", [])
 
     mock_add.assert_not_called()
 
@@ -241,7 +270,7 @@ async def test_import_raw_success(hass: HomeAssistant) -> None:
     with patch(PATCH_GET_INSTANCE) as mock_inst:
         mock_inst.return_value.async_add_executor_job = AsyncMock(return_value={})
         with patch(PATCH_ADD_STATS) as mock_add:
-            await async_import_raw_statistics(hass, records)
+            await async_import_raw_statistics(hass, "meter1", records)
 
     mock_add.assert_called_once()
     _hass, _metadata, statistics = mock_add.call_args[0]
@@ -265,7 +294,7 @@ async def test_import_raw_resumes_from_last(hass: HomeAssistant) -> None:
     with patch(PATCH_GET_INSTANCE) as mock_inst:
         mock_inst.return_value.async_add_executor_job = AsyncMock(return_value=last_stats)
         with patch(PATCH_ADD_STATS) as mock_add:
-            await async_import_raw_statistics(hass, records)
+            await async_import_raw_statistics(hass, "meter1", records)
 
     mock_add.assert_called_once()
     _hass, _metadata, statistics = mock_add.call_args[0]
@@ -287,7 +316,7 @@ async def test_import_raw_no_new_data(hass: HomeAssistant) -> None:
     with patch(PATCH_GET_INSTANCE) as mock_inst:
         mock_inst.return_value.async_add_executor_job = AsyncMock(return_value=last_stats)
         with patch(PATCH_ADD_STATS) as mock_add:
-            await async_import_raw_statistics(hass, records)
+            await async_import_raw_statistics(hass, "meter1", records)
 
     mock_add.assert_not_called()
 
@@ -707,3 +736,57 @@ async def test_backfill_clear_timeout_returns_error(hass: HomeAssistant) -> None
 
     assert result.get("error") == f"Failed to clear existing statistics for {STATISTIC_ID}"
     mock_add.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# async_migrate_legacy_statistics (real recorder)
+# ---------------------------------------------------------------------------
+
+
+def _add_legacy_statistics(hass: HomeAssistant) -> None:
+    """Write two hourly rows to the legacy shared statistic."""
+    metadata = _build_metadata(hass, "legacy")
+    metadata["statistic_id"] = LEGACY_STATISTIC_ID
+    start = datetime(2025, 1, 15, 10, tzinfo=UTC)
+    async_add_external_statistics(
+        hass,
+        metadata,
+        [
+            StatisticData(start=start, state=1.5, sum=1.5),
+            StatisticData(start=start + timedelta(hours=1), state=2.0, sum=3.5),
+        ],
+    )
+
+
+def _get_stats(hass: HomeAssistant, statistic_id: str) -> list[StatisticsRow]:
+    """Read all hourly rows of a statistic."""
+    rows = statistics_during_period(hass, datetime(2025, 1, 1, tzinfo=UTC), None, {statistic_id}, "hour", None, {"sum"})
+    return rows.get(statistic_id, [])
+
+
+async def test_migrate_legacy_single_meter(hass: HomeAssistant) -> None:
+    """Test legacy history moves to the meter's own statistic ID."""
+    MockConfigEntry(domain=DOMAIN, unique_id=MOCK_METER_ID).add_to_hass(hass)
+    _add_legacy_statistics(hass)
+    await async_wait_recording_done(hass)
+
+    await async_migrate_legacy_statistics(hass, MOCK_METER_ID)
+    await async_wait_recording_done(hass)
+
+    new = await hass.async_add_executor_job(_get_stats, hass, statistic_id_for(MOCK_METER_ID))
+    assert [row["sum"] for row in new] == [1.5, 3.5]
+    assert await hass.async_add_executor_job(_get_stats, hass, LEGACY_STATISTIC_ID) == []
+
+
+async def test_migrate_legacy_multiple_meters_skipped(hass: HomeAssistant) -> None:
+    """Test mixed legacy history is left alone when several meters are configured."""
+    MockConfigEntry(domain=DOMAIN, unique_id=MOCK_METER_ID).add_to_hass(hass)
+    MockConfigEntry(domain=DOMAIN, unique_id="AT0020000000000000001000000000002").add_to_hass(hass)
+    _add_legacy_statistics(hass)
+    await async_wait_recording_done(hass)
+
+    await async_migrate_legacy_statistics(hass, MOCK_METER_ID)
+    await async_wait_recording_done(hass)
+
+    assert await hass.async_add_executor_job(_get_stats, hass, statistic_id_for(MOCK_METER_ID)) == []
+    assert len(await hass.async_add_executor_job(_get_stats, hass, LEGACY_STATISTIC_ID)) == 2

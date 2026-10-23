@@ -73,7 +73,9 @@ Reads your electricity consumption from the Netz NÖ smart meter portal and make
 
 ## Energy Dashboard
 
-The integration automatically imports 15-minute interval data as hourly statistics. This powers the Home Assistant Energy Dashboard without needing a local meter reader. To add it, go to **Settings > Dashboards > Energy** and select the `netz_noe_smartmeter:grid_consumption` statistic under Grid consumption.
+The integration automatically imports 15-minute interval data as hourly statistics. This powers the Home Assistant Energy Dashboard without needing a local meter reader. To add it, go to **Settings > Dashboards > Energy** and select the meter's statistic (`netz_noe_smartmeter:<meter id lowercased>`) under Grid consumption, or under Return to grid for a feed-in meter. Each configured meter gets its own statistic, named after the integration entry (rename the entry, e.g. to "Bezug" or "Einspeisung", to tell them apart).
+
+**Upgrading from 0.1.x:** older versions wrote all meters into one shared `netz_noe_smartmeter:grid_consumption` statistic. With a single meter, its history is copied to the new statistic automatically on startup; you only need to reselect it in the Energy Dashboard. With multiple meters the shared statistic mixed their data, so it is left untouched; run the backfill service below once per meter.
 
 ## Backfill historical data
 
