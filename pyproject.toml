@@ -9,7 +9,7 @@ requires-python = ">=3.13.2"
 dev = [
     "pytest",
     "pytest-asyncio",
-    "pytest-homeassistant-custom-component==0.13.316",
+    "pytest-homeassistant-custom-component==0.13.373",
     "ruff",
     "codespell",
     "pre-commit",
