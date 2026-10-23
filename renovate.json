@@ -4,7 +4,6 @@
     "config:recommended"
   ],
   "dependencyDashboard": true,
-  "dependencyDashboardApproval": true,
   "labels": [
     "dependencies"
   ],
@@ -19,6 +18,13 @@
     ]
   },
   "packageRules": [
+    {
+      "description": "Python version follows what Home Assistant supports, bump manually",
+      "matchDepNames": [
+        "python"
+      ],
+      "enabled": false
+    },
     {
       "matchDatasources": [
         "pypi"
