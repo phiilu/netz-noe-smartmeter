@@ -3,13 +3,13 @@ name = "netz-noe-smartmeter"
 version = "0.1.0"
 description = "Home Assistant custom integration for Netz NÖ Smart Meter"
 license = "MIT"
-requires-python = ">=3.13.2"
+requires-python = ">=3.14.2"
 
 [dependency-groups]
 dev = [
     "pytest",
     "pytest-asyncio",
-    "pytest-homeassistant-custom-component==0.13.316",
+    "pytest-homeassistant-custom-component==0.13.373",
     "ruff",
     "codespell",
     "pre-commit",
@@ -18,7 +18,7 @@ dev = [
 ]
 
 [tool.ruff]
-target-version = "py313"
+target-version = "py314"
 line-length = 120
 
 [tool.ruff.lint]

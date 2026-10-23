@@ -7,7 +7,7 @@ from typing import cast, override
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
+from homeassistant.helpers.device_registry import ChildDeviceInfo, DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import CONF_METER_ID, DOMAIN, NetzNoeConfigData
@@ -35,7 +35,7 @@ class NetzNoeRefreshButton(ButtonEntity):
     _attr_icon: str | None = "mdi:refresh"
     _coordinator: NetzNoeCoordinator
     _attr_unique_id: str | None
-    _attr_device_info: DeviceInfo | None
+    _attr_device_info: DeviceInfo | ChildDeviceInfo | None
 
     def __init__(self, coordinator: NetzNoeCoordinator, meter_id: str) -> None:
         """Initialize the button."""

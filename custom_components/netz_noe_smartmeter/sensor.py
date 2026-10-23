@@ -15,7 +15,7 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory, UnitOfEnergy
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
+from homeassistant.helpers.device_registry import ChildDeviceInfo, DeviceEntryType, DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import BaseCoordinatorEntity
@@ -60,7 +60,7 @@ class NetzNoeSensorBase(BaseCoordinatorEntity[NetzNoeCoordinator], SensorEntity)
     _meter_id: str
     _attr_unique_id: str | None
     _attr_translation_key: str | None
-    _attr_device_info: DeviceInfo | None
+    _attr_device_info: DeviceInfo | ChildDeviceInfo | None
 
     def __init__(
         self,
@@ -114,7 +114,7 @@ class NetzNoeDailyConsumptionSensor(NetzNoeSensorBase):
     """Sensor for yesterday's total consumption."""
 
     _attr_device_class: SensorDeviceClass | None = SensorDeviceClass.ENERGY
-    _attr_state_class: SensorStateClass | str | None = SensorStateClass.MEASUREMENT
+    _attr_state_class: SensorStateClass | None = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement: str | None = UnitOfEnergy.KILO_WATT_HOUR
     _attr_icon: str | None = "mdi:flash"
     _attr_suggested_display_precision: int | None = 3
@@ -137,7 +137,7 @@ class NetzNoeWeeklyConsumptionSensor(NetzNoeSensorBase):
     """Sensor for current week's consumption (Mon-Sun)."""
 
     _attr_device_class: SensorDeviceClass | None = SensorDeviceClass.ENERGY
-    _attr_state_class: SensorStateClass | str | None = SensorStateClass.MEASUREMENT
+    _attr_state_class: SensorStateClass | None = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement: str | None = UnitOfEnergy.KILO_WATT_HOUR
     _attr_icon: str | None = "mdi:calendar-week"
     _attr_suggested_display_precision: int | None = 3
@@ -160,7 +160,7 @@ class NetzNoeMonthlyConsumptionSensor(NetzNoeSensorBase):
     """Sensor for current month's consumption."""
 
     _attr_device_class: SensorDeviceClass | None = SensorDeviceClass.ENERGY
-    _attr_state_class: SensorStateClass | str | None = SensorStateClass.MEASUREMENT
+    _attr_state_class: SensorStateClass | None = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement: str | None = UnitOfEnergy.KILO_WATT_HOUR
     _attr_icon: str | None = "mdi:calendar-month"
     _attr_suggested_display_precision: int | None = 3
@@ -183,7 +183,7 @@ class NetzNoeYearlyConsumptionSensor(NetzNoeSensorBase):
     """Sensor for year-to-date consumption with monthly breakdown."""
 
     _attr_device_class: SensorDeviceClass | None = SensorDeviceClass.ENERGY
-    _attr_state_class: SensorStateClass | str | None = SensorStateClass.MEASUREMENT
+    _attr_state_class: SensorStateClass | None = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement: str | None = UnitOfEnergy.KILO_WATT_HOUR
     _attr_icon: str | None = "mdi:calendar"
     _attr_suggested_display_precision: int | None = 3
@@ -267,7 +267,7 @@ class NetzNoeLastUpdatedSensor(NetzNoeSensorBase):
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=UTC)
             return dt
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return None
 
 
@@ -280,7 +280,7 @@ class NetzNoeBackfillStatusSensor(SensorEntity):
     _attr_entity_category: EntityCategory | None = EntityCategory.DIAGNOSTIC
     _coordinator: NetzNoeCoordinator
     _attr_unique_id: str | None
-    _attr_device_info: DeviceInfo | None
+    _attr_device_info: DeviceInfo | ChildDeviceInfo | None
 
     def __init__(self, coordinator: NetzNoeCoordinator, meter_id: str) -> None:
         """Initialize the backfill status sensor."""
