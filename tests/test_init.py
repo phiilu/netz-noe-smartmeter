@@ -428,6 +428,33 @@ async def test_backfill_service_unexpected_exception_sets_summary(
     assert coordinator.backfill_progress.result_summary == "Unexpected error during backfill"
 
 
+# -- statistic name --
+
+PATCH_ADD_STATS = "custom_components.netz_noe_smartmeter.statistics.async_add_external_statistics"
+
+
+async def test_entry_title_applied_on_setup_and_rename(
+    hass: HomeAssistant,
+    _patch_aiohttp: AsyncMock,
+    _patch_api: AsyncMock,
+) -> None:
+    """Test the statistic takes the entry title on setup and again when the entry is renamed."""
+    entry = _mock_entry()
+    entry.add_to_hass(hass)
+
+    with patch(PATCH_ADD_STATS) as mock_add:
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        assert [c.args[1]["name"] for c in mock_add.call_args_list] == ["Smart Meter"]
+        assert mock_add.call_args.args[2] == []
+
+        _ = hass.config_entries.async_update_entry(entry, title="Einspeisung")
+        await hass.async_block_till_done()
+
+    assert mock_add.call_args.args[1]["name"] == "Einspeisung"
+    assert mock_add.call_args.args[1]["statistic_id"] == statistic_id_for(MOCK_METER_ID)
+
+
 # -- config entry migration --
 
 

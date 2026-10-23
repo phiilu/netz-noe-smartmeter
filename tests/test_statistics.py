@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from functools import partial
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant.components.recorder.models import StatisticData
-from homeassistant.components.recorder.statistics import async_add_external_statistics
+from homeassistant.components.recorder.statistics import async_add_external_statistics, get_metadata
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.components.recorder.common import async_wait_recording_done
@@ -21,6 +22,7 @@ from custom_components.netz_noe_smartmeter.statistics import (
     _detect_earliest_data,
     _get_last_sum_and_end,
     _parse_raw_to_intervals,
+    async_apply_statistic_name,
     async_backfill_statistics,
     async_get_statistics_diagnostics,
     async_import_raw_statistics,
@@ -754,6 +756,19 @@ async def _add_statistics(hass: HomeAssistant) -> None:
         hass, _build_metadata(hass, "meter1"), [StatisticData(start=start, state=1.5, sum=1.5)]
     )
     await async_wait_recording_done(hass)
+
+
+async def test_apply_statistic_name(hass: HomeAssistant) -> None:
+    """Test an import without rows writes the entry title into the metadata."""
+    MockConfigEntry(domain=DOMAIN, unique_id=MOCK_METER_ID, title="Einspeisung").add_to_hass(hass)
+    statistic_id = statistic_id_for(MOCK_METER_ID)
+
+    async_apply_statistic_name(hass, MOCK_METER_ID)
+    await async_wait_recording_done(hass)
+
+    metadata = await hass.async_add_executor_job(partial(get_metadata, hass, statistic_ids={statistic_id}))
+    assert metadata[statistic_id][1]["name"] == "Einspeisung"
+    assert await async_statistic_has_data(hass, statistic_id) is False
 
 
 async def test_statistic_has_data(hass: HomeAssistant) -> None:
