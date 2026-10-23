@@ -22,14 +22,12 @@ from homeassistant.components.recorder.statistics import (
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.recorder import get_instance
 from homeassistant.util import dt as dt_util
+from homeassistant.util import slugify
 
 from .api import NetzNoeApi, NetzNoeApiError, NetzNoeRateLimitError, RawRecord
-from .const import DOMAIN
+from .const import CONF_STATISTIC_ID, DOMAIN, NetzNoeConfigData
 
 _LOGGER = logging.getLogger(__name__)
-
-STATISTIC_ID = f"{DOMAIN}:grid_consumption"
-STATISTIC_NAME = "Smart Meter Netzverbrauch"
 
 # Backfill settings
 BACKFILL_CHUNK_DAYS = 30
@@ -51,12 +49,26 @@ class BackfillResult(TypedDict, total=False):
     chunks_fetched: int
 
 
-def _build_metadata() -> StatisticMetaData:
-    """Build the statistics metadata (shared between incremental and backfill)."""
+def statistic_id_for(meter_id: str) -> str:
+    """Return the external statistic ID for a meter."""
+    return f"{DOMAIN}:{slugify(meter_id)}"
+
+
+def _build_metadata(hass: HomeAssistant, meter_id: str) -> StatisticMetaData:
+    """Build the statistics metadata (shared between incremental and backfill).
+
+    The statistic ID is stored in the config entry, since a meter set up before
+    0.2.0 keeps the statistic all meters shared back then. The name is the entry
+    title, so renamed entries (e.g. "Bezug") show up in the Energy Dashboard.
+    """
+    entry = hass.config_entries.async_entry_for_domain_unique_id(DOMAIN, meter_id)
+    statistic_id = statistic_id_for(meter_id)
+    if entry:
+        statistic_id = cast(NetzNoeConfigData, cast(object, entry.data)).get(CONF_STATISTIC_ID, statistic_id)
     return StatisticMetaData(
         source=DOMAIN,
-        statistic_id=STATISTIC_ID,
-        name=STATISTIC_NAME,
+        statistic_id=statistic_id,
+        name=entry.title if entry else f"Smart Meter {meter_id}",
         unit_of_measurement="kWh",
         has_mean=False,
         has_sum=True,
@@ -117,17 +129,18 @@ def _aggregate_to_hourly(
 
 async def _get_last_sum_and_end(
     hass: HomeAssistant,
+    statistic_id: str,
 ) -> tuple[Decimal, datetime | None]:
     """Query the last imported statistic to get the running sum and end time."""
     last_stats = await get_instance(hass).async_add_executor_job(
-        get_last_statistics, hass, 1, STATISTIC_ID, True, {"sum", "state"}
+        get_last_statistics, hass, 1, statistic_id, True, {"sum", "state"}
     )
 
     running_sum = Decimal(0)
     last_end: datetime | None = None
 
-    if last_stats and STATISTIC_ID in last_stats and last_stats[STATISTIC_ID]:
-        last = last_stats[STATISTIC_ID][0]
+    if last_stats and last_stats.get(statistic_id):
+        last = last_stats[statistic_id][0]
         sum_val = last.get("sum")
         if sum_val is not None:
             running_sum = Decimal(str(sum_val))
@@ -142,13 +155,15 @@ async def _get_last_sum_and_end(
 
 async def async_import_raw_statistics(
     hass: HomeAssistant,
+    meter_id: str,
     raw_records: list[RawRecord],
 ) -> None:
     """Import raw 15-min data as hourly statistics (incremental, called by coordinator)."""
     if not raw_records:
         return
 
-    running_sum, last_end = await _get_last_sum_and_end(hass)
+    metadata = _build_metadata(hass, meter_id)
+    running_sum, last_end = await _get_last_sum_and_end(hass, metadata["statistic_id"])
     if last_end:
         _LOGGER.debug(
             "Resuming statistics import: last_sum=%.3f, last_end=%s",
@@ -168,7 +183,6 @@ async def async_import_raw_statistics(
         len(hourly),
     )
 
-    metadata = _build_metadata()
     statistics: list[StatisticData] = []
     for ts in sorted(hourly.keys()):
         running_sum += hourly[ts]
@@ -188,6 +202,23 @@ async def async_import_raw_statistics(
         float(running_sum),
     )
     async_add_external_statistics(hass, metadata, statistics)
+
+
+async def async_statistic_has_data(hass: HomeAssistant, statistic_id: str) -> bool:
+    """Return whether the statistic has at least one row."""
+    _, last_end = await _get_last_sum_and_end(hass, statistic_id)
+    return last_end is not None
+
+
+async def async_get_statistics_diagnostics(hass: HomeAssistant, meter_id: str) -> dict[str, object]:
+    """Return the ID, last sum and end of the meter's statistic."""
+    statistic_id = _build_metadata(hass, meter_id)["statistic_id"]
+    last_sum, last_end = await _get_last_sum_and_end(hass, statistic_id)
+    return {
+        "statistic_id": statistic_id,
+        "last_sum": float(last_sum),
+        "last_end": last_end.isoformat() if last_end else None,
+    }
 
 
 async def _detect_earliest_data(
@@ -337,7 +368,8 @@ async def async_backfill_statistics(
     )
 
     # Build statistics with running sum (sorted chronologically)
-    metadata = _build_metadata()
+    metadata = _build_metadata(hass, meter_id)
+    statistic_id = metadata["statistic_id"]
     statistics: list[StatisticData] = []
     running_sum = Decimal(0)
     for ts in sorted(hourly.keys()):
@@ -367,17 +399,17 @@ async def async_backfill_statistics(
     def _clear_done() -> None:
         _ = hass.loop.call_soon_threadsafe(done_event.set)
 
-    instance.async_clear_statistics([STATISTIC_ID], on_done=_clear_done)
+    instance.async_clear_statistics([statistic_id], on_done=_clear_done)
     await instance.async_block_till_done()
     try:
         async with asyncio.timeout(BACKFILL_CLEAR_CONFIRM_TIMEOUT_SECONDS):
             _ = await done_event.wait()
     except TimeoutError:
-        error = f"Failed to clear existing statistics for {STATISTIC_ID}"
+        error = f"Failed to clear existing statistics for {statistic_id}"
         _LOGGER.error("%s", error)
         return BackfillResult(error=error)
 
-    _LOGGER.info("Cleared existing statistics for %s", STATISTIC_ID)
+    _LOGGER.info("Cleared existing statistics for %s", statistic_id)
 
     _LOGGER.info(
         "Backfill complete: importing %d hourly entries (%s to %s, total=%.3f kWh)",

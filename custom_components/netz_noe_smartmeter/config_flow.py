@@ -20,7 +20,8 @@ from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 
 from .api import NetzNoeApi, NetzNoeApiError, NetzNoeAuthError
-from .const import CONF_METER_ID, DOMAIN
+from .const import CONF_METER_ID, CONF_STATISTIC_ID, DOMAIN
+from .statistics import statistic_id_for
 
 _LOGGER = logging.getLogger(__name__)
 METER_ID_PATTERN = re.compile(r"^AT[A-Z0-9]{31}$")
@@ -66,6 +67,7 @@ class NetzNoeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Netz NÖ Smart Meter."""
 
     VERSION: int = 1
+    MINOR_VERSION: int = 2
 
     @override
     async def async_step_user(
@@ -112,7 +114,10 @@ class NetzNoeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     _LOGGER.exception("Unexpected exception")
                     errors["base"] = "unknown"
                 else:
-                    return self.async_create_entry(title=info["title"], data=validated_input)
+                    return self.async_create_entry(
+                        title=info["title"],
+                        data={**validated_input, CONF_STATISTIC_ID: statistic_id_for(normalized_meter_id)},
+                    )
 
         return self.async_show_form(
             step_id="user",

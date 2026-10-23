@@ -32,6 +32,7 @@ def _make_entry_with_coordinator(
 
     coordinator = MagicMock(spec=NetzNoeCoordinator)
     coordinator.data = data
+    coordinator.meter_id = MOCK_METER_ID
     entry.runtime_data = coordinator
     return entry
 
@@ -58,6 +59,11 @@ async def test_diagnostics_with_data(hass: HomeAssistant) -> None:
 
     # Coordinator data should be present as a dict
     assert "coordinator_data" in result
+    assert result["statistics"] == {
+        "statistic_id": "netz_noe_smartmeter:at0020000000000000001000000654321",
+        "last_sum": 0.0,
+        "last_end": None,
+    }
     coordinator_data = result["coordinator_data"]
     assert isinstance(coordinator_data, dict)
     assert coordinator_data["daily_total"] == 1.5

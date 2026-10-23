@@ -28,19 +28,18 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.typing import ConfigType
 
 from .api import NetzNoeApi
-from .const import DOMAIN
+from .const import CONF_METER_ID, CONF_STATISTIC_ID, DOMAIN, LEGACY_STATISTIC_ID, NetzNoeConfigData
 from .coordinator import NetzNoeCoordinator
 from .sensor import SIGNAL_BACKFILL_PROGRESS
-from .statistics import async_backfill_statistics
+from .statistics import async_backfill_statistics, async_statistic_has_data, statistic_id_for
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [Platform.BUTTON, Platform.SENSOR]
-# HA types this as Callable[[dict], dict]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
 
-SERVICE_BACKFILL = "backfill_statistics"
 ATTR_CONFIG_ENTRY_ID = "config_entry_id"
+SERVICE_BACKFILL = "backfill_statistics"
 
 # 5-minute timeout for API requests (the Netz NÖ API can be slow)
 API_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=300)
@@ -63,32 +62,7 @@ async def async_setup(hass: HomeAssistant, _config: ConfigType) -> bool:
         else:
             raise ServiceValidationError("start_year must be an integer")
 
-        loaded_entries: list[NetzNoeConfigEntry] = [
-            cast(NetzNoeConfigEntry, entry)
-            for entry in hass.config_entries.async_entries(DOMAIN)
-            if entry.state is ConfigEntryState.LOADED
-        ]
-        if not loaded_entries:
-            raise ServiceValidationError("No loaded Netz NÖ Smart Meter integration found")
-
-        config_entry_id_raw = call_data.get(ATTR_CONFIG_ENTRY_ID)
-        if config_entry_id_raw is None:
-            config_entry_id = None
-        elif isinstance(config_entry_id_raw, str):
-            config_entry_id = config_entry_id_raw
-        else:
-            raise ServiceValidationError("config_entry_id must be a string")
-
-        if config_entry_id is not None:
-            entry = next((e for e in loaded_entries if e.entry_id == config_entry_id), None)
-            if entry is None:
-                raise ServiceValidationError("Specified config_entry_id is not loaded")
-        elif len(loaded_entries) > 1:
-            raise ServiceValidationError("Multiple meters loaded; specify config_entry_id")
-        else:
-            entry = loaded_entries[0]
-
-        coord: NetzNoeCoordinator = entry.runtime_data
+        coord: NetzNoeCoordinator = _get_loaded_entry(hass, call_data).runtime_data
         await coord.ensure_authenticated()
 
         def on_progress(state: str, chunk: int, total: int, records: int, date_range: str) -> None:
@@ -136,7 +110,6 @@ async def async_setup(hass: HomeAssistant, _config: ConfigType) -> bool:
 
         return cast(ServiceResponse, cast(object, result))
 
-    # HA's VolSchemaType contains All[Unknown]
     hass.services.async_register(  # pyright: ignore[reportUnknownMemberType]
         DOMAIN,
         SERVICE_BACKFILL,
@@ -151,6 +124,57 @@ async def async_setup(hass: HomeAssistant, _config: ConfigType) -> bool:
     )
 
     return True
+
+
+def _get_loaded_entry(hass: HomeAssistant, call_data: dict[str, object]) -> NetzNoeConfigEntry:
+    """Return the loaded entry a service call targets."""
+    loaded_entries: list[NetzNoeConfigEntry] = [
+        cast(NetzNoeConfigEntry, entry)
+        for entry in hass.config_entries.async_entries(DOMAIN)
+        if entry.state is ConfigEntryState.LOADED
+    ]
+    if not loaded_entries:
+        raise ServiceValidationError("No loaded Netz NÖ Smart Meter integration found")
+
+    config_entry_id = call_data.get(ATTR_CONFIG_ENTRY_ID)
+    if config_entry_id is not None and not isinstance(config_entry_id, str):
+        raise ServiceValidationError("config_entry_id must be a string")
+
+    if config_entry_id is not None:
+        entry = next((e for e in loaded_entries if e.entry_id == config_entry_id), None)
+        if entry is None:
+            raise ServiceValidationError("Specified config_entry_id is not loaded")
+        return entry
+    if len(loaded_entries) > 1:
+        raise ServiceValidationError("Multiple meters loaded; specify config_entry_id")
+    return loaded_entries[0]
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: NetzNoeConfigEntry) -> bool:
+    """Migrate an entry step by step to the config flow's current minor version."""
+    if entry.minor_version < 2:
+        # 1.2 stores the statistic ID. The first meter to migrate keeps the statistic all
+        # meters shared before 0.2.0, so its history and Energy Dashboard selection survive.
+        # No await between the claim check and the update, so two entries migrating at
+        # the same time cannot both claim it.
+        meter_id = cast(NetzNoeConfigData, cast(object, entry.data))[CONF_METER_ID]
+        legacy_has_data = await async_statistic_has_data(hass, LEGACY_STATISTIC_ID)
+        statistic_id = (
+            LEGACY_STATISTIC_ID if legacy_has_data and not _legacy_claimed(hass) else statistic_id_for(meter_id)
+        )
+        _LOGGER.info("%s uses statistic %s", entry.title, statistic_id)
+        _ = hass.config_entries.async_update_entry(
+            entry, data={**entry.data, CONF_STATISTIC_ID: statistic_id}, minor_version=2
+        )
+    return True
+
+
+def _legacy_claimed(hass: HomeAssistant) -> bool:
+    """Return whether an entry already uses the statistic all meters shared before 0.2.0."""
+    return any(
+        cast(NetzNoeConfigData, cast(object, e.data)).get(CONF_STATISTIC_ID) == LEGACY_STATISTIC_ID
+        for e in hass.config_entries.async_entries(DOMAIN)
+    )
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: NetzNoeConfigEntry) -> bool:

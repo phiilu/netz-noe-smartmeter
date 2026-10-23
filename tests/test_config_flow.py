@@ -40,7 +40,11 @@ async def test_user_flow_success(hass: HomeAssistant) -> None:
 
     assert result["type"] is FlowResultType.CREATE_ENTRY  # type: ignore[typeddict-item]
     assert result["title"] == "Smart Meter 0000654321"  # type: ignore[typeddict-item]
-    assert result["data"] == MOCK_CONFIG_DATA  # type: ignore[typeddict-item]
+    assert result["data"] == {  # type: ignore[typeddict-item]
+        **MOCK_CONFIG_DATA,
+        "statistic_id": "netz_noe_smartmeter:at0020000000000000001000000654321",
+    }
+    assert result["result"].minor_version == 2  # type: ignore[typeddict-item]
 
 
 async def test_user_flow_invalid_auth(hass: HomeAssistant) -> None:
@@ -215,6 +219,7 @@ async def test_reauth_flow_success(hass: HomeAssistant) -> None:
             result["flow_id"],  # type: ignore[typeddict-item]
             {"username": "new@example.com", "password": "new-pass"},
         )
+        await hass.async_block_till_done()
 
     assert result["type"] is FlowResultType.ABORT  # type: ignore[typeddict-item]
     assert result["reason"] == "reauth_successful"  # type: ignore[typeddict-item]

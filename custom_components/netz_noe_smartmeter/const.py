@@ -1,6 +1,6 @@
 """Constants for the Netz NÖ Smart Meter integration."""
 
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 DOMAIN = "netz_noe_smartmeter"
 
@@ -17,9 +17,13 @@ ENDPOINT_YEAR = "ConsumptionRecord/Year"
 
 # Config keys
 CONF_METER_ID = "meter_id"
+CONF_STATISTIC_ID = "statistic_id"
 
 # Defaults
 DEFAULT_SCAN_INTERVAL_HOURS = 6
+
+# Statistic all meters shared before 0.2.0
+LEGACY_STATISTIC_ID = f"{DOMAIN}:grid_consumption"
 
 
 class NetzNoeConfigData(TypedDict):
@@ -27,4 +31,5 @@ class NetzNoeConfigData(TypedDict):
 
     meter_id: str
     password: str
+    statistic_id: NotRequired[str]
     username: str

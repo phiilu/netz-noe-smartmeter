@@ -162,7 +162,7 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
         # Import raw 15-min data as hourly statistics for Energy Dashboard
         if data.raw_records:
             try:
-                await async_import_raw_statistics(self.hass, data.raw_records)
+                await async_import_raw_statistics(self.hass, self.meter_id, data.raw_records)
             except Exception:
                 _LOGGER.exception("Failed to import statistics")
 
