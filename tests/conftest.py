@@ -53,6 +53,13 @@ def auto_enable_custom_integrations(
 
 
 @pytest.fixture
+def mock_setup_entry() -> Generator[AsyncMock]:
+    """Prevent the created config entry from being set up against the real API."""
+    with patch("custom_components.netz_noe_smartmeter.async_setup_entry", return_value=True) as mock:
+        yield mock
+
+
+@pytest.fixture
 def mock_api() -> Generator[MagicMock]:
     """Return a mocked NetzNoeApi."""
     with patch(

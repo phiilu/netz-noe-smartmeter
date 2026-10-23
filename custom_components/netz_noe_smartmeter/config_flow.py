@@ -7,7 +7,7 @@ import re
 from typing import Any, cast, override
 
 import aiohttp
-import voluptuous as vol
+import probatio as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant

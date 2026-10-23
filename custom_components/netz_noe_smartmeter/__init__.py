@@ -6,7 +6,7 @@ import logging
 from typing import cast
 
 import aiohttp
-import voluptuous as vol
+import probatio as vol
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import Platform
 from homeassistant.core import (
@@ -29,7 +29,8 @@ from .statistics import async_backfill_statistics
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [Platform.BUTTON, Platform.SENSOR]
-CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+# HA types this as Callable[[dict], dict]
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
 
 SERVICE_BACKFILL = "backfill_statistics"
 ATTR_CONFIG_ENTRY_ID = "config_entry_id"
@@ -128,7 +129,8 @@ async def async_setup(hass: HomeAssistant, _config: ConfigType) -> bool:
 
         return cast(ServiceResponse, cast(object, result))
 
-    hass.services.async_register(
+    # HA's VolSchemaType contains All[Unknown]
+    hass.services.async_register(  # pyright: ignore[reportUnknownMemberType]
         DOMAIN,
         SERVICE_BACKFILL,
         handle_backfill,

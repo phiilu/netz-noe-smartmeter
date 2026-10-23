@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
@@ -22,6 +23,8 @@ from custom_components.netz_noe_smartmeter.const import CONF_METER_ID, DOMAIN
 from .conftest import MOCK_CONFIG_DATA, MOCK_METER_ID
 
 PATCH_VALIDATE = "custom_components.netz_noe_smartmeter.config_flow.validate_input"
+
+pytestmark = pytest.mark.usefixtures("mock_setup_entry")
 
 
 async def test_user_flow_success(hass: HomeAssistant) -> None:
