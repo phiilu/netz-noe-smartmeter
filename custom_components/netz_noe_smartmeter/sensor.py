@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from functools import cached_property
-from typing import ClassVar, cast, override
+from typing import TYPE_CHECKING, ClassVar, cast, override
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -15,13 +15,16 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory, UnitOfEnergy
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.device_registry import ChildDeviceInfo, DeviceEntryType, DeviceInfo
+from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import BaseCoordinatorEntity
 
 from .const import CONF_METER_ID, DOMAIN, NetzNoeConfigData
 from .coordinator import NetzNoeCoordinator, NetzNoeData
+
+if TYPE_CHECKING:
+    from homeassistant.helpers.device_registry import ChildDeviceInfo  # Home Assistant 2026.9+
 
 SIGNAL_BACKFILL_PROGRESS = f"{DOMAIN}_backfill_progress"
 
@@ -267,7 +270,7 @@ class NetzNoeLastUpdatedSensor(NetzNoeSensorBase):
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=UTC)
             return dt
-        except ValueError, TypeError:
+        except (ValueError, TypeError):
             return None
 
 

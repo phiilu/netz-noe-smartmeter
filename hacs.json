@@ -1,6 +1,6 @@
 {
   "name": "Netz NÖ Smart Meter",
-  "homeassistant": "2026.10.0",
+  "homeassistant": "2025.12.0",
   "country": "AT",
   "render_readme": true
 }

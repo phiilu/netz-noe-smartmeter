@@ -189,7 +189,7 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
                     _LOGGER.debug("Day data for %s: %.3f kWh", fetch_date, data.daily_total)
                     return
                 _LOGGER.debug("No day data for %s, trying older date", fetch_date)
-            except NetzNoeAuthError, NetzNoeRateLimitError:
+            except (NetzNoeAuthError, NetzNoeRateLimitError):
                 raise
             except NetzNoeApiError as err:
                 _LOGGER.warning("Failed to fetch day data for %s: %s", fetch_date, err)
@@ -210,7 +210,7 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
                 week_end,
                 data.weekly_total,
             )
-        except NetzNoeAuthError, NetzNoeRateLimitError:
+        except (NetzNoeAuthError, NetzNoeRateLimitError):
             raise
         except NetzNoeApiError as err:
             _LOGGER.warning("Failed to fetch week data: %s", err)
@@ -227,7 +227,7 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
                 data.monthly_total = round(current_month_val, 3)
 
             data.yearly_total = round(sum(v for v in monthly if v is not None), 3)
-        except NetzNoeAuthError, NetzNoeRateLimitError:
+        except (NetzNoeAuthError, NetzNoeRateLimitError):
             raise
         except NetzNoeApiError as err:
             _LOGGER.warning("Failed to fetch year data: %s", err)
@@ -241,7 +241,7 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
             data.prev_year = prev_year
             data.prev_year_monthly_values = prev_monthly
             _LOGGER.debug("Previous year %d data fetched", prev_year)
-        except NetzNoeAuthError, NetzNoeRateLimitError:
+        except (NetzNoeAuthError, NetzNoeRateLimitError):
             raise
         except NetzNoeApiError as err:
             _LOGGER.debug("No previous year data for %d: %s", prev_year, err)
@@ -251,7 +251,7 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
         raw_start = today - timedelta(days=5)
         try:
             data.raw_records = await self.api.get_raw(self.meter_id, raw_start, today)
-        except NetzNoeAuthError, NetzNoeRateLimitError:
+        except (NetzNoeAuthError, NetzNoeRateLimitError):
             raise
         except NetzNoeApiError as err:
             _LOGGER.warning("Failed to fetch raw data: %s", err)

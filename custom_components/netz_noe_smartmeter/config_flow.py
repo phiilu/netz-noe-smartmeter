@@ -4,10 +4,17 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, cast, override
+from typing import TYPE_CHECKING, Any, cast, override
 
 import aiohttp
-import probatio as vol
+
+if TYPE_CHECKING:
+    import probatio as vol
+else:
+    try:
+        import probatio as vol
+    except ImportError:  # pragma: no cover - Home Assistant before 2026.9, run by tests-minimum
+        import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
