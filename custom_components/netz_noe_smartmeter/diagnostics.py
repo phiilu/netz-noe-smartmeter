@@ -11,6 +11,7 @@ from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 
 from . import NetzNoeConfigEntry
+from .statistics import async_get_statistics_diagnostics
 
 TO_REDACT = {CONF_PASSWORD, CONF_USERNAME}
 
@@ -21,7 +22,7 @@ _REDACT_DATA = cast(
 
 
 async def async_get_config_entry_diagnostics(
-    _hass: HomeAssistant,
+    hass: HomeAssistant,
     entry: NetzNoeConfigEntry,
 ) -> dict[str, object]:
     """Return diagnostics for a config entry."""
@@ -30,4 +31,5 @@ async def async_get_config_entry_diagnostics(
     return {
         "entry_data": _REDACT_DATA(dict(entry.data), TO_REDACT),
         "coordinator_data": asdict(coordinator.data) if coordinator.data else None,
+        "statistics": await async_get_statistics_diagnostics(hass, coordinator.meter_id),
     }

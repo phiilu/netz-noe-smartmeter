@@ -18,7 +18,6 @@ from homeassistant.components.recorder.models import (
 from homeassistant.components.recorder.statistics import (
     async_add_external_statistics,
     get_last_statistics,
-    statistics_during_period,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.recorder import get_instance
@@ -26,12 +25,9 @@ from homeassistant.util import dt as dt_util
 from homeassistant.util import slugify
 
 from .api import NetzNoeApi, NetzNoeApiError, NetzNoeRateLimitError, RawRecord
-from .const import DOMAIN
+from .const import CONF_STATISTIC_ID, DOMAIN, NetzNoeConfigData
 
 _LOGGER = logging.getLogger(__name__)
-
-# Shared by all meters before 0.2.0, replaced by statistic_id_for()
-LEGACY_STATISTIC_ID = f"{DOMAIN}:grid_consumption"
 
 # Backfill settings
 BACKFILL_CHUNK_DAYS = 30
@@ -61,13 +57,17 @@ def statistic_id_for(meter_id: str) -> str:
 def _build_metadata(hass: HomeAssistant, meter_id: str) -> StatisticMetaData:
     """Build the statistics metadata (shared between incremental and backfill).
 
-    Named after the config entry title so renamed entries (e.g. "Bezug") show up
-    in the Energy Dashboard; HA updates the name on the next import.
+    The statistic ID is stored in the config entry, since a meter set up before
+    0.2.0 keeps the statistic all meters shared back then. The name is the entry
+    title, so renamed entries (e.g. "Bezug") show up in the Energy Dashboard.
     """
     entry = hass.config_entries.async_entry_for_domain_unique_id(DOMAIN, meter_id)
+    statistic_id = statistic_id_for(meter_id)
+    if entry:
+        statistic_id = cast(NetzNoeConfigData, cast(object, entry.data)).get(CONF_STATISTIC_ID, statistic_id)
     return StatisticMetaData(
         source=DOMAIN,
-        statistic_id=statistic_id_for(meter_id),
+        statistic_id=statistic_id,
         name=entry.title if entry else f"Smart Meter {meter_id}",
         unit_of_measurement="kWh",
         has_mean=False,
@@ -204,64 +204,21 @@ async def async_import_raw_statistics(
     async_add_external_statistics(hass, metadata, statistics)
 
 
-async def async_migrate_legacy_statistics(hass: HomeAssistant, meter_id: str) -> None:
-    """Copy the pre-0.2.0 shared statistic to this meter's own statistic ID.
+async def async_statistic_has_data(hass: HomeAssistant, statistic_id: str) -> bool:
+    """Return whether the statistic has at least one row."""
+    _, last_end = await _get_last_sum_and_end(hass, statistic_id)
+    return last_end is not None
 
-    Only done for single-meter installs: with several meters the legacy statistic
-    mixes their data and cannot be split, so those users must run backfill instead.
-    The legacy statistic is cleared only after the copy is verified.
-    """
-    instance = get_instance(hass)
-    rows = await instance.async_add_executor_job(
-        statistics_during_period,
-        hass,
-        dt_util.utc_from_timestamp(0),
-        None,
-        {LEGACY_STATISTIC_ID},
-        "hour",
-        None,
-        {"state", "sum"},
-    )
-    legacy = rows.get(LEGACY_STATISTIC_ID)
-    if not legacy:
-        return
 
-    if len(hass.config_entries.async_entries(DOMAIN)) > 1:
-        _LOGGER.info(
-            "Not migrating %s because it mixes data of multiple meters, run backfill_statistics per meter",
-            LEGACY_STATISTIC_ID,
-        )
-        return
-
-    metadata = _build_metadata(hass, meter_id)
-    new_id = metadata["statistic_id"]
-    _, new_end = await _get_last_sum_and_end(hass, new_id)
-    if new_end is not None:
-        _LOGGER.warning("Not migrating %s because %s already has data", LEGACY_STATISTIC_ID, new_id)
-        return
-
-    # Rows are written by this integration and always carry start, state and sum
-    statistics = [
-        StatisticData(
-            start=dt_util.utc_from_timestamp(row.get("start", 0)),
-            state=row.get("state") or 0.0,
-            sum=row.get("sum") or 0.0,
-        )
-        for row in legacy
-    ]
-    async_add_external_statistics(hass, metadata, statistics)
-    await instance.async_block_till_done()
-
-    new_sum, new_end = await _get_last_sum_and_end(hass, new_id)
-    legacy_sum = legacy[-1].get("sum")
-    if new_end is None or legacy_sum is None or new_sum != Decimal(str(legacy_sum)):
-        _LOGGER.error(
-            "Migration of %s to %s could not be verified, keeping legacy statistic", LEGACY_STATISTIC_ID, new_id
-        )
-        return
-
-    instance.async_clear_statistics([LEGACY_STATISTIC_ID])
-    _LOGGER.info("Migrated %d statistics entries from %s to %s", len(statistics), LEGACY_STATISTIC_ID, new_id)
+async def async_get_statistics_diagnostics(hass: HomeAssistant, meter_id: str) -> dict[str, object]:
+    """Return the ID, last sum and end of the meter's statistic."""
+    statistic_id = _build_metadata(hass, meter_id)["statistic_id"]
+    last_sum, last_end = await _get_last_sum_and_end(hass, statistic_id)
+    return {
+        "statistic_id": statistic_id,
+        "last_sum": float(last_sum),
+        "last_end": last_end.isoformat() if last_end else None,
+    }
 
 
 async def _detect_earliest_data(

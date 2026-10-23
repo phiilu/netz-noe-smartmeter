@@ -8,27 +8,23 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant.components.recorder.models import StatisticData
-from homeassistant.components.recorder.statistics import (
-    StatisticsRow,
-    async_add_external_statistics,
-    statistics_during_period,
-)
+from homeassistant.components.recorder.statistics import async_add_external_statistics
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.components.recorder.common import async_wait_recording_done
 
 from custom_components.netz_noe_smartmeter.api import NetzNoeApiError, NetzNoeRateLimitError, RawRecord
-from custom_components.netz_noe_smartmeter.const import DOMAIN
+from custom_components.netz_noe_smartmeter.const import CONF_STATISTIC_ID, DOMAIN, LEGACY_STATISTIC_ID
 from custom_components.netz_noe_smartmeter.statistics import (
-    LEGACY_STATISTIC_ID,
     _aggregate_to_hourly,
     _build_metadata,
     _detect_earliest_data,
     _get_last_sum_and_end,
     _parse_raw_to_intervals,
     async_backfill_statistics,
+    async_get_statistics_diagnostics,
     async_import_raw_statistics,
-    async_migrate_legacy_statistics,
+    async_statistic_has_data,
     statistic_id_for,
 )
 
@@ -55,6 +51,14 @@ def test_build_metadata_uses_entry_title(hass: HomeAssistant) -> None:
     """Test that the statistic is named after the (renamable) config entry title."""
     MockConfigEntry(domain=DOMAIN, unique_id=MOCK_METER_ID, title="Einspeisung").add_to_hass(hass)
     assert _build_metadata(hass, MOCK_METER_ID)["name"] == "Einspeisung"
+
+
+def test_build_metadata_uses_stored_statistic_id(hass: HomeAssistant) -> None:
+    """Test a meter set up before 0.2.0 keeps the statistic ID stored in its entry."""
+    MockConfigEntry(domain=DOMAIN, unique_id=MOCK_METER_ID, data={CONF_STATISTIC_ID: LEGACY_STATISTIC_ID}).add_to_hass(
+        hass
+    )
+    assert _build_metadata(hass, MOCK_METER_ID)["statistic_id"] == LEGACY_STATISTIC_ID
 
 
 def test_statistic_id_unique_per_meter() -> None:
@@ -739,54 +743,32 @@ async def test_backfill_clear_timeout_returns_error(hass: HomeAssistant) -> None
 
 
 # ---------------------------------------------------------------------------
-# async_migrate_legacy_statistics (real recorder)
+# async_statistic_has_data / async_get_statistics_diagnostics (real recorder)
 # ---------------------------------------------------------------------------
 
 
-def _add_legacy_statistics(hass: HomeAssistant) -> None:
-    """Write two hourly rows to the legacy shared statistic."""
-    metadata = _build_metadata(hass, "legacy")
-    metadata["statistic_id"] = LEGACY_STATISTIC_ID
+async def _add_statistics(hass: HomeAssistant) -> None:
+    """Write one hourly row to meter1's statistic."""
     start = datetime(2025, 1, 15, 10, tzinfo=UTC)
     async_add_external_statistics(
-        hass,
-        metadata,
-        [
-            StatisticData(start=start, state=1.5, sum=1.5),
-            StatisticData(start=start + timedelta(hours=1), state=2.0, sum=3.5),
-        ],
+        hass, _build_metadata(hass, "meter1"), [StatisticData(start=start, state=1.5, sum=1.5)]
     )
-
-
-def _get_stats(hass: HomeAssistant, statistic_id: str) -> list[StatisticsRow]:
-    """Read all hourly rows of a statistic."""
-    rows = statistics_during_period(hass, datetime(2025, 1, 1, tzinfo=UTC), None, {statistic_id}, "hour", None, {"sum"})
-    return rows.get(statistic_id, [])
-
-
-async def test_migrate_legacy_single_meter(hass: HomeAssistant) -> None:
-    """Test legacy history moves to the meter's own statistic ID."""
-    MockConfigEntry(domain=DOMAIN, unique_id=MOCK_METER_ID).add_to_hass(hass)
-    _add_legacy_statistics(hass)
     await async_wait_recording_done(hass)
 
-    await async_migrate_legacy_statistics(hass, MOCK_METER_ID)
-    await async_wait_recording_done(hass)
 
-    new = await hass.async_add_executor_job(_get_stats, hass, statistic_id_for(MOCK_METER_ID))
-    assert [row["sum"] for row in new] == [1.5, 3.5]
-    assert await hass.async_add_executor_job(_get_stats, hass, LEGACY_STATISTIC_ID) == []
+async def test_statistic_has_data(hass: HomeAssistant) -> None:
+    """Test a statistic counts as present once it has a row."""
+    assert await async_statistic_has_data(hass, STATISTIC_ID) is False
+    await _add_statistics(hass)
+    assert await async_statistic_has_data(hass, STATISTIC_ID) is True
 
 
-async def test_migrate_legacy_multiple_meters_skipped(hass: HomeAssistant) -> None:
-    """Test mixed legacy history is left alone when several meters are configured."""
-    MockConfigEntry(domain=DOMAIN, unique_id=MOCK_METER_ID).add_to_hass(hass)
-    MockConfigEntry(domain=DOMAIN, unique_id="AT0020000000000000001000000000002").add_to_hass(hass)
-    _add_legacy_statistics(hass)
-    await async_wait_recording_done(hass)
+async def test_statistics_diagnostics(hass: HomeAssistant) -> None:
+    """Test diagnostics report the meter's statistic."""
+    await _add_statistics(hass)
 
-    await async_migrate_legacy_statistics(hass, MOCK_METER_ID)
-    await async_wait_recording_done(hass)
-
-    assert await hass.async_add_executor_job(_get_stats, hass, statistic_id_for(MOCK_METER_ID)) == []
-    assert len(await hass.async_add_executor_job(_get_stats, hass, LEGACY_STATISTIC_ID)) == 2
+    assert await async_get_statistics_diagnostics(hass, "meter1") == {
+        "statistic_id": STATISTIC_ID,
+        "last_sum": 1.5,
+        "last_end": "2025-01-15T11:00:00+00:00",
+    }

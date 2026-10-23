@@ -73,9 +73,11 @@ Reads your electricity consumption from the Netz NÖ smart meter portal and make
 
 ## Energy Dashboard
 
-The integration automatically imports 15-minute interval data as hourly statistics. This powers the Home Assistant Energy Dashboard without needing a local meter reader. To add it, go to **Settings > Dashboards > Energy** and select the meter's statistic (`netz_noe_smartmeter:<meter id lowercased>`) under Grid consumption, or under Return to grid for a feed-in meter. Each configured meter gets its own statistic, named after the integration entry (rename the entry, e.g. to "Bezug" or "Einspeisung", to tell them apart).
+The integration automatically imports 15-minute interval data as hourly statistics. This powers the Home Assistant Energy Dashboard without needing a local meter reader. To add it, go to **Settings > Dashboards > Energy** and select the meter's statistic (`netz_noe_smartmeter:<meter id lowercased>`, or `netz_noe_smartmeter:grid_consumption` for a meter set up before 0.2.0) under Grid consumption, or under Return to grid for a feed-in meter. Each configured meter gets its own statistic, named after the integration entry (rename the entry, e.g. to "Bezug" or "Einspeisung", to tell them apart).
 
-**Upgrading from 0.1.x:** older versions wrote all meters into one shared `netz_noe_smartmeter:grid_consumption` statistic. With a single meter, its history is copied to the new statistic automatically on startup; you only need to reselect it in the Energy Dashboard. With multiple meters the shared statistic mixed their data, so it is left untouched; run the backfill service below once per meter.
+**Upgrading from 0.1.x:** older versions wrote all meters into one shared `netz_noe_smartmeter:grid_consumption` statistic. One meter keeps that statistic, so a single-meter setup needs no changes: history and Energy Dashboard selection stay as they are. Every other meter gets its own statistic. Since the shared one mixed their data, run the backfill action below once per meter.
+
+If you would rather have the new statistic ID for that meter too: remove its entry, add it again, run the backfill action, reselect the statistic in the Energy Dashboard, and delete the old one under **Developer Tools > Statistics**, where it is listed as no longer provided.
 
 ## Backfill historical data
 

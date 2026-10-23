@@ -3,17 +3,22 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Generator
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from homeassistant.components.recorder.models import StatisticData, StatisticMeanType, StatisticMetaData
+from homeassistant.components.recorder.statistics import async_add_external_statistics
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.components.recorder.common import async_wait_recording_done
 
-from custom_components.netz_noe_smartmeter.const import DOMAIN
+from custom_components.netz_noe_smartmeter.const import CONF_STATISTIC_ID, DOMAIN, LEGACY_STATISTIC_ID
+from custom_components.netz_noe_smartmeter.statistics import statistic_id_for
 
 from .conftest import MOCK_CONFIG_DATA, MOCK_METER_ID
 
@@ -88,13 +93,13 @@ async def test_backfill_service_handler_rejects_non_integer_start_year(hass: Hom
         service_func: Callable[[ServiceCall], Awaitable[ServiceResponse]],
         **_kwargs: object,
     ) -> None:
-        captured["handler"] = service_func
+        captured[_service] = service_func
 
     with patch("homeassistant.core.ServiceRegistry.async_register", side_effect=_capture_register):
         result = await async_setup(hass, {})
 
     assert result is True
-    handler = cast(Callable[[ServiceCall], Awaitable[ServiceResponse]], captured["handler"])
+    handler = cast(Callable[[ServiceCall], Awaitable[ServiceResponse]], captured["backfill_statistics"])
 
     with pytest.raises(ServiceValidationError, match="start_year must be an integer"):
         await handler(
@@ -120,13 +125,13 @@ async def test_backfill_service_handler_rejects_non_string_config_entry_id(hass:
         service_func: Callable[[ServiceCall], Awaitable[ServiceResponse]],
         **_kwargs: object,
     ) -> None:
-        captured["handler"] = service_func
+        captured[_service] = service_func
 
     with patch("homeassistant.core.ServiceRegistry.async_register", side_effect=_capture_register):
         result = await async_setup(hass, {})
 
     assert result is True
-    handler = cast(Callable[[ServiceCall], Awaitable[ServiceResponse]], captured["handler"])
+    handler = cast(Callable[[ServiceCall], Awaitable[ServiceResponse]], captured["backfill_statistics"])
     loaded_entry = SimpleNamespace(state=ConfigEntryState.LOADED, entry_id="entry-1")
 
     with (
@@ -421,3 +426,66 @@ async def test_backfill_service_unexpected_exception_sets_summary(
     coordinator = entry.runtime_data
     assert coordinator.backfill_progress.state == "failed"
     assert coordinator.backfill_progress.result_summary == "Unexpected error during backfill"
+
+
+# -- config entry migration --
+
+
+async def _add_legacy_statistics(hass: HomeAssistant) -> None:
+    """Write one hourly row to the statistic all meters shared before 0.2.0."""
+    metadata = StatisticMetaData(
+        source=DOMAIN,
+        statistic_id=LEGACY_STATISTIC_ID,
+        name="Smart Meter",
+        unit_of_measurement="kWh",
+        has_mean=False,
+        has_sum=True,
+        mean_type=StatisticMeanType.NONE,
+        unit_class="energy",
+    )
+    start = datetime(2025, 1, 15, 10, tzinfo=UTC)
+    async_add_external_statistics(hass, metadata, [StatisticData(start=start, state=1.5, sum=1.5)])
+    await async_wait_recording_done(hass)
+
+
+async def _setup_1_1_entry(hass: HomeAssistant, entry: MockConfigEntry) -> str:
+    """Set up a minor version 1 entry and return the statistic ID it was migrated to."""
+    entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.LOADED
+    assert entry.minor_version == 2
+    return entry.data[CONF_STATISTIC_ID]
+
+
+async def test_migrate_entry_keeps_legacy_statistic(
+    hass: HomeAssistant,
+    _patch_aiohttp: AsyncMock,
+    _patch_api: AsyncMock,
+) -> None:
+    """Test a meter set up before 0.2.0 keeps the shared statistic and its history."""
+    await _add_legacy_statistics(hass)
+
+    assert await _setup_1_1_entry(hass, _mock_entry()) == LEGACY_STATISTIC_ID
+
+
+async def test_migrate_entry_without_legacy_statistic(
+    hass: HomeAssistant,
+    _patch_aiohttp: AsyncMock,
+    _patch_api: AsyncMock,
+) -> None:
+    """Test a meter without legacy history gets its own statistic."""
+    assert await _setup_1_1_entry(hass, _mock_entry()) == statistic_id_for(MOCK_METER_ID)
+
+
+async def test_migrate_entry_second_meter_gets_own_statistic(
+    hass: HomeAssistant,
+    _patch_aiohttp: AsyncMock,
+    _patch_api: AsyncMock,
+) -> None:
+    """Test only one meter can keep the shared statistic."""
+    await _add_legacy_statistics(hass)
+    other = "AT0020000000000000001000000000002"
+
+    assert await _setup_1_1_entry(hass, _mock_entry()) == LEGACY_STATISTIC_ID
+    assert await _setup_1_1_entry(hass, _mock_entry(other)) == statistic_id_for(other)
