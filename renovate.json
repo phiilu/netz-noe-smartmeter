@@ -11,6 +11,10 @@
   "ignorePaths": [
     "ha-dev-config/**"
   ],
+  "automerge": true,
+  "automergeType": "pr",
+  "platformAutomerge": true,
+  "minimumReleaseAge": "3 days",
   "lockFileMaintenance": {
     "enabled": true,
     "schedule": [
@@ -56,27 +60,6 @@
         "pytest-homeassistant-custom-component"
       ],
       "groupName": "home assistant"
-    },
-    {
-      "matchUpdateTypes": [
-        "patch"
-      ],
-      "matchManagers": [
-        "pep621",
-        "uv",
-        "github-actions",
-        "pre-commit"
-      ],
-      "automerge": true,
-      "automergeType": "pr",
-      "platformAutomerge": true
-    },
-    {
-      "matchUpdateTypes": [
-        "patch"
-      ],
-      "matchCurrentVersion": "/^0\\./",
-      "automerge": false
     }
   ]
 }
