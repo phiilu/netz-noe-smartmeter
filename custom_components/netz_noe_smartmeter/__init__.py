@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 else:
     try:
         import probatio as vol
-    except ImportError:  # Home Assistant before 2026.9
+    except ImportError:  # pragma: no cover - Home Assistant before 2026.9, run by tests-minimum
         import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import Platform
