@@ -204,6 +204,15 @@ async def async_import_raw_statistics(
     async_add_external_statistics(hass, metadata, statistics)
 
 
+def async_apply_statistic_name(hass: HomeAssistant, meter_id: str) -> None:
+    """Write the metadata now, so a renamed entry shows its new name right away.
+
+    An import without rows only updates the metadata. Otherwise the name would
+    change with the next import that has new data, up to a day later.
+    """
+    async_add_external_statistics(hass, _build_metadata(hass, meter_id), [])
+
+
 async def async_statistic_has_data(hass: HomeAssistant, statistic_id: str) -> bool:
     """Return whether the statistic has at least one row."""
     _, last_end = await _get_last_sum_and_end(hass, statistic_id)

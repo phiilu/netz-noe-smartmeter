@@ -31,7 +31,12 @@ from .api import NetzNoeApi
 from .const import CONF_METER_ID, CONF_STATISTIC_ID, DOMAIN, LEGACY_STATISTIC_ID, NetzNoeConfigData
 from .coordinator import NetzNoeCoordinator
 from .sensor import SIGNAL_BACKFILL_PROGRESS
-from .statistics import async_backfill_statistics, async_statistic_has_data, statistic_id_for
+from .statistics import (
+    async_apply_statistic_name,
+    async_backfill_statistics,
+    async_statistic_has_data,
+    statistic_id_for,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -195,12 +200,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: NetzNoeConfigEntry) -> b
     # Store coordinator as runtime_data
     entry.runtime_data = coordinator
 
+    async_apply_statistic_name(hass, coordinator.meter_id)
+    entry.async_on_unload(entry.add_update_listener(_async_entry_updated))
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     # Schedule a full refresh (including raw data + statistics) now that setup is done
     _ = hass.async_create_task(coordinator.async_request_refresh())
 
     return True
+
+
+async def _async_entry_updated(hass: HomeAssistant, entry: NetzNoeConfigEntry) -> None:
+    """Apply a new entry title to the statistic."""
+    async_apply_statistic_name(hass, entry.runtime_data.meter_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: NetzNoeConfigEntry) -> bool:
