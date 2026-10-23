@@ -2,7 +2,7 @@
   "venvPath": ".",
   "venv": ".venv",
   "extraPaths": ["custom_components"],
-  "pythonVersion": "3.14",
+  "pythonVersion": "3.13",
   "exclude": [".venv", "ha-dev-config"],
   "typeCheckingMode": "recommended",
   "failOnWarnings": true,

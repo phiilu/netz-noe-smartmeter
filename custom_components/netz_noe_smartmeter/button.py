@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
-from typing import cast, override
+from typing import TYPE_CHECKING, cast, override
 
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import ChildDeviceInfo, DeviceEntryType, DeviceInfo
+from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import CONF_METER_ID, DOMAIN, NetzNoeConfigData
 from .coordinator import NetzNoeCoordinator
+
+if TYPE_CHECKING:
+    from homeassistant.helpers.device_registry import ChildDeviceInfo  # Home Assistant 2026.9+
 
 
 async def async_setup_entry(

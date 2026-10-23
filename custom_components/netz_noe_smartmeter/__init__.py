@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 import logging
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import aiohttp
-import probatio as vol
+
+if TYPE_CHECKING:
+    import probatio as vol
+else:
+    try:
+        import probatio as vol
+    except ImportError:  # Home Assistant before 2026.9
+        import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import Platform
 from homeassistant.core import (
