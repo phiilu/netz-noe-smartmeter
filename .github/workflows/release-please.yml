@@ -1,0 +1,19 @@
+name: Release Please
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v5
+        with:
+          # A PAT lets the required checks run on the release PR; the default token cannot trigger workflows.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
