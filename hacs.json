@@ -3,5 +3,7 @@
   "homeassistant": "2025.12.0",
   "country": "AT",
   "hide_default_branch": true,
-  "render_readme": true
+  "render_readme": true,
+  "zip_release": true,
+  "filename": "netz_noe_smartmeter.zip"
 }

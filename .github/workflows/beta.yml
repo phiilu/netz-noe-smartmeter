@@ -1,0 +1,53 @@
+name: Beta
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Beta version, e.g. 0.3.1-beta.2"
+        required: true
+      test_focus:
+        description: "What testers should look at (Markdown, optional)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  beta:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install gh (act only, GitHub runners have it)
+        if: ${{ env.ACT }}
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq gh
+      - name: Check version
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          gh release list --limit 1000 --json tagName --jq '.[].tagName' > /tmp/tags.txt
+          echo "latest_final=$(python3 scripts/check_beta_version.py "$VERSION" /tmp/tags.txt)" >> "$GITHUB_OUTPUT"
+      - name: Build zip
+        run: python3 scripts/build_zip.py "${{ inputs.version }}" netz_noe_smartmeter.zip
+      - name: Write release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          LATEST_FINAL: ${{ steps.check.outputs.latest_final }}
+          TEST_FOCUS: ${{ inputs.test_focus }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="v$VERSION" -f target_commitish="$GITHUB_SHA" -f previous_tag_name="$LATEST_FINAL" \
+            --jq .body > /tmp/changes.md
+          python3 scripts/beta_notes.py "$VERSION" "$LATEST_FINAL" "$TEST_FOCUS" /tmp/changes.md > /tmp/notes.md
+          cat /tmp/notes.md
+      - name: Publish pre-release
+        if: ${{ !env.ACT }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${{ inputs.version }}" netz_noe_smartmeter.zip \
+            --target "$GITHUB_SHA" --prerelease --title "v${{ inputs.version }}" --notes-file /tmp/notes.md
