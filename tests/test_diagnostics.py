@@ -55,12 +55,12 @@ async def test_diagnostics_with_data(hass: HomeAssistant) -> None:
     assert isinstance(entry_data, dict)
     assert entry_data["username"] == "**REDACTED**"
     assert entry_data["password"] == "**REDACTED**"
-    assert entry_data["meter_id"] == MOCK_METER_ID
+    assert entry_data["meter_id"] == "**REDACTED**"
 
     # Coordinator data should be present as a dict
     assert "coordinator_data" in result
     assert result["statistics"] == {
-        "statistic_id": "netz_noe_smartmeter:at0020000000000000001000000654321",
+        "statistic_id": "**REDACTED**",
         "last_sum": 0.0,
         "last_end": None,
     }
@@ -83,7 +83,6 @@ async def test_diagnostics_no_coordinator_data(hass: HomeAssistant) -> None:
     assert entry_data["username"] == "**REDACTED**"
 
 
-async def test_to_redact_contains_credentials() -> None:
-    """Test that TO_REDACT includes username and password."""
-    assert "username" in TO_REDACT
-    assert "password" in TO_REDACT
+async def test_to_redact_contains_credentials_and_identifiers() -> None:
+    """Test that TO_REDACT covers credentials and the customer's meter identifiers."""
+    assert {"username", "password", "meter_id", "statistic_id"} == TO_REDACT
