@@ -33,36 +33,19 @@ jobs:
       - name: Build zip
         run: python3 scripts/build_zip.py "${{ inputs.version }}" netz_noe_smartmeter.zip
       - name: Write release notes
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
           LATEST_FINAL: ${{ steps.check.outputs.latest_final }}
           TEST_FOCUS: ${{ inputs.test_focus }}
         run: |
-          FINAL="${VERSION%%-beta.*}"
           gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
             -f tag_name="v$VERSION" -f target_commitish="$GITHUB_SHA" -f previous_tag_name="$LATEST_FINAL" \
-            --jq .body | { grep -Ev '^\* (chore|ci|docs|test|build)(\(.*\))?:' || true; } > /tmp/changes.md
-          {
-            echo "**Beta for v$FINAL.** Please report findings in the linked issues or open a new one."
-            echo
-            echo "## Install"
-            echo
-            echo "In HACS: ⋮ → Redownload → \"Need a different version?\" → pick v$VERSION, then restart Home Assistant."
-            echo
-            echo "## What to test"
-            echo
-            echo "${TEST_FOCUS:-Everything listed under the changes below.}"
-            echo
-            echo "## Rollback"
-            echo
-            echo "HACS → Redownload → choose $LATEST_FINAL, then restart."
-            echo
-            cat /tmp/changes.md
-          } > /tmp/notes.md
+            --jq .body > /tmp/changes.md
+          python3 scripts/beta_notes.py "$VERSION" "$LATEST_FINAL" "$TEST_FOCUS" /tmp/changes.md > /tmp/notes.md
           cat /tmp/notes.md
       - name: Publish pre-release
+        if: ${{ !env.ACT }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
