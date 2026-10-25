@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from abc import ABC, abstractmethod
+from datetime import UTC, date, datetime
 from functools import cached_property
 from typing import TYPE_CHECKING, ClassVar, cast, override
 
@@ -19,6 +20,7 @@ from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import BaseCoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import CONF_METER_ID, DOMAIN, NetzNoeConfigData
 from .coordinator import NetzNoeCoordinator, NetzNoeData
@@ -109,18 +111,42 @@ class NetzNoeSensorBase(BaseCoordinatorEntity[NetzNoeCoordinator], SensorEntity)
         cache = cast(dict[str, object], cast(object, self.__dict__))
         _ = cache.pop("available", None)
         _ = cache.pop("native_value", None)
+        _ = cache.pop("last_reset", None)
         _ = cache.pop("extra_state_attributes", None)
         super()._handle_coordinator_update()
 
 
-class NetzNoeDailyConsumptionSensor(NetzNoeSensorBase):
-    """Sensor for yesterday's total consumption."""
+class NetzNoeConsumptionSensor(NetzNoeSensorBase, ABC):
+    """Base class for period consumption totals.
+
+    The value is the consumption since the start of its period and drops at
+    every rollover, so the state class is total with last_reset at the period
+    start. That yields correct sum statistics.
+    """
 
     _attr_device_class: SensorDeviceClass | None = SensorDeviceClass.ENERGY
-    _attr_state_class: SensorStateClass | None = SensorStateClass.MEASUREMENT
+    _attr_state_class: SensorStateClass | None = SensorStateClass.TOTAL
     _attr_native_unit_of_measurement: str | None = UnitOfEnergy.KILO_WATT_HOUR
-    _attr_icon: str | None = "mdi:flash"
     _attr_suggested_display_precision: int | None = 3
+
+    @abstractmethod
+    def _period_start(self, data: NetzNoeData) -> date | None:
+        """Return the first day of the period the value covers."""
+
+    @cached_property
+    @override
+    def last_reset(self) -> datetime | None:
+        """Return the start of the period as the last reset."""
+        data = cast(NetzNoeData | None, self.coordinator.data)
+        if data is None or (start := self._period_start(data)) is None:
+            return None
+        return dt_util.start_of_local_day(start)
+
+
+class NetzNoeDailyConsumptionSensor(NetzNoeConsumptionSensor):
+    """Sensor for yesterday's total consumption."""
+
+    _attr_icon: str | None = "mdi:flash"
 
     def __init__(self, coordinator: NetzNoeCoordinator, meter_id: str) -> None:
         """Initialize."""
@@ -135,15 +161,16 @@ class NetzNoeDailyConsumptionSensor(NetzNoeSensorBase):
             return None
         return data.daily_total
 
+    @override
+    def _period_start(self, data: NetzNoeData) -> date | None:
+        """Return the first day of the period."""
+        return data.daily_date
 
-class NetzNoeWeeklyConsumptionSensor(NetzNoeSensorBase):
+
+class NetzNoeWeeklyConsumptionSensor(NetzNoeConsumptionSensor):
     """Sensor for current week's consumption (Mon-Sun)."""
 
-    _attr_device_class: SensorDeviceClass | None = SensorDeviceClass.ENERGY
-    _attr_state_class: SensorStateClass | None = SensorStateClass.MEASUREMENT
-    _attr_native_unit_of_measurement: str | None = UnitOfEnergy.KILO_WATT_HOUR
     _attr_icon: str | None = "mdi:calendar-week"
-    _attr_suggested_display_precision: int | None = 3
 
     def __init__(self, coordinator: NetzNoeCoordinator, meter_id: str) -> None:
         """Initialize."""
@@ -158,15 +185,16 @@ class NetzNoeWeeklyConsumptionSensor(NetzNoeSensorBase):
             return None
         return data.weekly_total
 
+    @override
+    def _period_start(self, data: NetzNoeData) -> date | None:
+        """Return the first day of the period."""
+        return data.week_start
 
-class NetzNoeMonthlyConsumptionSensor(NetzNoeSensorBase):
+
+class NetzNoeMonthlyConsumptionSensor(NetzNoeConsumptionSensor):
     """Sensor for current month's consumption."""
 
-    _attr_device_class: SensorDeviceClass | None = SensorDeviceClass.ENERGY
-    _attr_state_class: SensorStateClass | None = SensorStateClass.MEASUREMENT
-    _attr_native_unit_of_measurement: str | None = UnitOfEnergy.KILO_WATT_HOUR
     _attr_icon: str | None = "mdi:calendar-month"
-    _attr_suggested_display_precision: int | None = 3
 
     def __init__(self, coordinator: NetzNoeCoordinator, meter_id: str) -> None:
         """Initialize."""
@@ -181,15 +209,16 @@ class NetzNoeMonthlyConsumptionSensor(NetzNoeSensorBase):
             return None
         return data.monthly_total
 
+    @override
+    def _period_start(self, data: NetzNoeData) -> date | None:
+        """Return the first day of the period."""
+        return data.month_start
 
-class NetzNoeYearlyConsumptionSensor(NetzNoeSensorBase):
+
+class NetzNoeYearlyConsumptionSensor(NetzNoeConsumptionSensor):
     """Sensor for year-to-date consumption with monthly breakdown."""
 
-    _attr_device_class: SensorDeviceClass | None = SensorDeviceClass.ENERGY
-    _attr_state_class: SensorStateClass | None = SensorStateClass.MEASUREMENT
-    _attr_native_unit_of_measurement: str | None = UnitOfEnergy.KILO_WATT_HOUR
     _attr_icon: str | None = "mdi:calendar"
-    _attr_suggested_display_precision: int | None = 3
 
     MONTH_NAMES: ClassVar[list[str]] = [
         "jan",
@@ -218,6 +247,11 @@ class NetzNoeYearlyConsumptionSensor(NetzNoeSensorBase):
         if data is None:
             return None
         return data.yearly_total
+
+    @override
+    def _period_start(self, data: NetzNoeData) -> date | None:
+        """Return the first day of the period."""
+        return data.year_start
 
     @cached_property
     @override
@@ -333,5 +367,6 @@ class NetzNoeBackfillStatusSensor(SensorEntity):
         """Handle backfill progress update."""
         cache = cast(dict[str, object], cast(object, self.__dict__))
         _ = cache.pop("native_value", None)
+        _ = cache.pop("last_reset", None)
         _ = cache.pop("extra_state_attributes", None)
         self.async_write_ha_state()

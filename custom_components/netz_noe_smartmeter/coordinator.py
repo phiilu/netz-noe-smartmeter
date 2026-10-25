@@ -54,18 +54,22 @@ class NetzNoeData:
     daily_values: list[float] = field(default_factory=list)
     # Timestamps for daily values
     daily_timestamps: list[str | None] = field(default_factory=list)
-    # Yesterday's total consumption (kWh)
+    # Yesterday's total consumption (kWh) and the day it covers
     daily_total: float | None = None
+    daily_date: date | None = None
     # Current week's daily totals (Mon-Sun, from Week endpoint)
     weekly_daily_values: list[float | None] = field(default_factory=list)
-    # Current week total consumption (kWh)
+    # Current week total consumption (kWh) and its Monday
     weekly_total: float | None = None
+    week_start: date | None = None
     # Monthly totals from Year endpoint (12 entries, None for future months)
     monthly_values: list[float | None] = field(default_factory=list)
-    # Current month consumption (kWh)
+    # Current month consumption (kWh) and its first day
     monthly_total: float | None = None
-    # Year-to-date consumption (kWh)
+    month_start: date | None = None
+    # Year-to-date consumption (kWh) and January 1st
     yearly_total: float | None = None
+    year_start: date | None = None
     # Previous year monthly totals (for invoice comparison)
     prev_year: int | None = None
     prev_year_monthly_values: list[float | None] = field(default_factory=list)
@@ -193,6 +197,7 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
                     data.daily_values = non_null
                     data.daily_timestamps = timestamps
                     data.daily_total = round(sum(non_null), 3)
+                    data.daily_date = fetch_date
 
                     non_null_ts = [t for t in timestamps if t is not None]
                     if non_null_ts:
@@ -215,6 +220,7 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
             data.weekly_daily_values = weekly_values
             non_null_weekly = [v for v in weekly_values if v is not None]
             data.weekly_total = round(sum(non_null_weekly), 3) if non_null_weekly else 0.0
+            data.week_start = week_start
             _LOGGER.debug(
                 "Week data %s to %s: %.3f kWh",
                 week_start,
@@ -236,8 +242,10 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
             current_month_val = monthly[today.month - 1] if len(monthly) >= today.month else None
             if current_month_val is not None:
                 data.monthly_total = round(current_month_val, 3)
+                data.month_start = today.replace(day=1)
 
             data.yearly_total = round(sum(v for v in monthly if v is not None), 3)
+            data.year_start = today.replace(month=1, day=1)
         except _POLL_FATAL_ERRORS:
             raise
         except NetzNoeApiError as err:

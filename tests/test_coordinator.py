@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -18,7 +19,7 @@ from custom_components.netz_noe_smartmeter.api import (
     NetzNoeRateLimitError,
 )
 from custom_components.netz_noe_smartmeter.const import DOMAIN
-from custom_components.netz_noe_smartmeter.coordinator import NetzNoeCoordinator
+from custom_components.netz_noe_smartmeter.coordinator import NetzNoeCoordinator, NetzNoeData
 
 from .conftest import (
     MOCK_CONFIG_DATA,
@@ -118,6 +119,7 @@ async def test_update_data_success(hass: HomeAssistant) -> None:
     # Daily
     assert data.daily_values == [0.1, 0.2, 0.3]
     assert data.daily_total == pytest.approx(0.6)
+    assert data.daily_date == date.today() - timedelta(days=1)
     assert data.last_data_timestamp == "2025-01-15T00:45:00"
 
     # Weekly
@@ -126,6 +128,7 @@ async def test_update_data_success(hass: HomeAssistant) -> None:
 
     # Monthly / Yearly (year response: [10.0, 20.0, 30.0, None*9])
     assert data.yearly_total == pytest.approx(60.0)
+    assert data.year_start == date.today().replace(month=1, day=1)
 
     # Raw records
     assert data.raw_records == MOCK_RAW_RESPONSE
@@ -240,6 +243,24 @@ async def test_update_data_day_fallback_to_older_date(
 
     assert call_count == 2
     assert data.daily_total == pytest.approx(0.6)
+    assert data.daily_date == date.today() - timedelta(days=2)
+
+
+async def test_fetch_helpers_record_period_starts(hass: HomeAssistant) -> None:
+    """Test each fetch helper records the start of the period its total covers."""
+    api = _mock_api()
+    coord = _make_coordinator(hass, api)
+    data = NetzNoeData()
+    today = date(2025, 2, 12)  # a Wednesday
+
+    await coord._fetch_day(data, today)
+    await coord._fetch_week(data, today)
+    await coord._fetch_current_year(data, today)
+
+    assert data.daily_date == date(2025, 2, 11)
+    assert data.week_start == date(2025, 2, 10)
+    assert data.month_start == date(2025, 2, 1)
+    assert data.year_start == date(2025, 1, 1)
 
 
 async def test_update_data_no_day_data(hass: HomeAssistant) -> None:
@@ -256,6 +277,7 @@ async def test_update_data_no_day_data(hass: HomeAssistant) -> None:
 
     assert data.daily_values == []
     assert data.daily_total is None
+    assert data.daily_date is None
 
 
 # -- Statistics import error handling --
