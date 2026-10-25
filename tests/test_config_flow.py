@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.netz_noe_smartmeter.api import NetzNoeApiError, NetzNoeAuthError
+from custom_components.netz_noe_smartmeter.api import NetzNoeApiError, NetzNoeAuthError, NetzNoeMaintenanceError
 from custom_components.netz_noe_smartmeter.config_flow import (
     NetzNoeConfigFlow,
     is_valid_austrian_meter_id,
@@ -58,6 +58,19 @@ async def test_user_flow_invalid_auth(hass: HomeAssistant) -> None:
 
     assert result["type"] is FlowResultType.FORM  # type: ignore[typeddict-item]
     assert result["errors"] == {"base": "invalid_auth"}  # type: ignore[typeddict-item]
+
+
+async def test_user_flow_maintenance(hass: HomeAssistant) -> None:
+    """Test config flow while the portal is under maintenance."""
+    with patch(PATCH_VALIDATE, side_effect=NetzNoeMaintenanceError("Portal is under maintenance")):
+        result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            MOCK_CONFIG_DATA,  # type: ignore[typeddict-item]
+        )
+
+    assert result["type"] is FlowResultType.FORM  # type: ignore[typeddict-item]
+    assert result["errors"] == {"base": "maintenance"}  # type: ignore[typeddict-item]
 
 
 async def test_user_flow_cannot_connect(hass: HomeAssistant) -> None:
@@ -248,6 +261,28 @@ async def test_reauth_flow_invalid_auth(hass: HomeAssistant) -> None:
 
     assert result["type"] is FlowResultType.FORM  # type: ignore[typeddict-item]
     assert result["errors"] == {"base": "invalid_auth"}  # type: ignore[typeddict-item]
+    await hass.async_block_till_done()
+
+
+async def test_reauth_flow_maintenance(hass: HomeAssistant) -> None:
+    """Test reauth flow shows the maintenance error while the portal is down."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Smart Meter",
+        data=MOCK_CONFIG_DATA,
+        unique_id=MOCK_METER_ID,
+    )
+    entry.add_to_hass(hass)
+
+    with patch(PATCH_VALIDATE, side_effect=NetzNoeMaintenanceError("Portal is under maintenance")):
+        result = await entry.start_reauth_flow(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],  # type: ignore[typeddict-item]
+            {"username": "user", "password": "pass"},
+        )
+
+    assert result["type"] is FlowResultType.FORM  # type: ignore[typeddict-item]
+    assert result["errors"] == {"base": "maintenance"}  # type: ignore[typeddict-item]
     await hass.async_block_till_done()
 
 

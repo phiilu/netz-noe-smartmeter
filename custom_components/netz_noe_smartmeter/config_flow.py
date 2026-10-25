@@ -19,7 +19,7 @@ from homeassistant import config_entries
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 
-from .api import NetzNoeApi, NetzNoeApiError, NetzNoeAuthError
+from .api import NetzNoeApi, NetzNoeApiError, NetzNoeAuthError, NetzNoeMaintenanceError
 from .const import CONF_METER_ID, CONF_STATISTIC_ID, DOMAIN
 from .statistics import statistic_id_for
 
@@ -108,6 +108,8 @@ class NetzNoeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     info = await validate_input(self.hass, validated_input)
                 except NetzNoeAuthError:
                     errors["base"] = "invalid_auth"
+                except NetzNoeMaintenanceError:
+                    errors["base"] = "maintenance"
                 except NetzNoeApiError:
                     errors["base"] = "cannot_connect"
                 except Exception:
@@ -154,6 +156,8 @@ class NetzNoeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 )
             except NetzNoeAuthError:
                 errors["base"] = "invalid_auth"
+            except NetzNoeMaintenanceError:
+                errors["base"] = "maintenance"
             except NetzNoeApiError:
                 errors["base"] = "cannot_connect"
             except Exception:

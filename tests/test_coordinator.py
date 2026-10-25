@@ -14,6 +14,7 @@ from custom_components.netz_noe_smartmeter.api import (
     NetzNoeApi,
     NetzNoeApiError,
     NetzNoeAuthError,
+    NetzNoeMaintenanceError,
     NetzNoeRateLimitError,
 )
 from custom_components.netz_noe_smartmeter.const import DOMAIN
@@ -379,6 +380,30 @@ async def test_update_data_retry_auth_error_raises_config_entry_auth_failed(
 
 
 # -- _async_update_data: rate limit handling --
+
+
+async def test_update_data_maintenance_raises_update_failed(
+    hass: HomeAssistant,
+) -> None:
+    """Test NetzNoeMaintenanceError is wrapped in UpdateFailed with a 30 minute retry."""
+    api = _mock_api(get_day=AsyncMock(side_effect=NetzNoeMaintenanceError("Portal is under maintenance")))
+    coord = _make_coordinator(hass, api)
+
+    with pytest.raises(UpdateFailed, match="under maintenance") as exc_info:
+        await coord._async_update_data()
+
+    assert exc_info.value.retry_after == 1800
+
+
+async def test_update_data_maintenance_during_year_fetch_propagates(
+    hass: HomeAssistant,
+) -> None:
+    """Test maintenance mid-poll aborts the poll instead of being logged as a missing endpoint."""
+    api = _mock_api(get_year=AsyncMock(side_effect=NetzNoeMaintenanceError("Portal is under maintenance")))
+    coord = _make_coordinator(hass, api)
+
+    with pytest.raises(UpdateFailed, match="under maintenance"):
+        await coord._async_update_data()
 
 
 async def test_update_data_rate_limit_raises_update_failed(
