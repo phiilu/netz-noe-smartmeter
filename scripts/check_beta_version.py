@@ -1,4 +1,4 @@
-"""Reject a beta version unless it is newer than every existing release tag.
+"""Reject a beta version unless it is newer than every existing release tag; print the latest final tag.
 
 Usage: python scripts/check_beta_version.py <version> <file with one tag per line>
 """
@@ -22,10 +22,18 @@ def main(version: str, tags_file: str) -> None:
     if match is None:
         sys.exit(f"Version must look like 0.3.1-beta.2, got {version!r}")
     new = key(*match.groups())
+    finals: list[tuple[tuple[int, int, int, int, int], str]] = []
     for tag in pathlib.Path(tags_file).read_text().split():
         existing = TAG.match(tag)
-        if existing is not None and key(*existing.groups()) >= new:
+        if existing is None:
+            continue
+        if key(*existing.groups()) >= new:
             sys.exit(f"{version} is not newer than existing release {tag}")
+        if existing.group(4) is None:
+            finals.append((key(*existing.groups()), tag))
+    if not finals:
+        sys.exit("No final release found to base the beta on")
+    _ = sys.stdout.write(max(finals)[1] + "\n")
 
 
 if __name__ == "__main__":
