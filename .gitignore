@@ -89,3 +89,4 @@ ha-dev-config/
 # Local agent artifacts
 HANDOFF.md
 .tmp/
+ha-hacs-config/

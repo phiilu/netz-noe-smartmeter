@@ -10,3 +10,16 @@ services:
     environment:
       - TZ=Europe/Vienna
     restart: "no"
+
+  # HACS end-to-end: `docker compose --profile hacs up -d hacs`, then install the integration through HACS
+  hacs:
+    image: ghcr.io/home-assistant/home-assistant:2026.10.3
+    container_name: ha-hacs
+    profiles: [hacs]
+    ports:
+      - "8125:8123"
+    volumes:
+      - ./ha-hacs-config:/config
+    environment:
+      - TZ=Europe/Vienna
+    restart: "no"
