@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from freezegun.api import FrozenDateTimeFactory
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import UpdateFailed
@@ -119,7 +120,7 @@ async def test_update_data_success(hass: HomeAssistant) -> None:
     # Daily
     assert data.daily_values == [0.1, 0.2, 0.3]
     assert data.daily_total == pytest.approx(0.6)
-    assert data.daily_date == date.today() - timedelta(days=1)
+    assert data.daily_date == api.get_day.call_args.args[1]
     assert data.last_data_timestamp == "2025-01-15T00:45:00"
 
     # Weekly
@@ -128,7 +129,6 @@ async def test_update_data_success(hass: HomeAssistant) -> None:
 
     # Monthly / Yearly (year response: [10.0, 20.0, 30.0, None*9])
     assert data.yearly_total == pytest.approx(60.0)
-    assert data.year_start == date.today().replace(month=1, day=1)
 
     # Raw records
     assert data.raw_records == MOCK_RAW_RESPONSE
@@ -243,7 +243,7 @@ async def test_update_data_day_fallback_to_older_date(
 
     assert call_count == 2
     assert data.daily_total == pytest.approx(0.6)
-    assert data.daily_date == date.today() - timedelta(days=2)
+    assert data.daily_date == api.get_day.call_args.args[1]
 
 
 async def test_fetch_helpers_record_period_starts(hass: HomeAssistant) -> None:
@@ -251,16 +251,76 @@ async def test_fetch_helpers_record_period_starts(hass: HomeAssistant) -> None:
     api = _mock_api()
     coord = _make_coordinator(hass, api)
     data = NetzNoeData()
-    today = date(2025, 2, 12)  # a Wednesday
+    today = date(2025, 2, 10)  # a Monday: the newest day the portal can have is Sunday
+    newest = date(2025, 2, 9)
 
     await coord._fetch_day(data, today)
-    await coord._fetch_week(data, today)
-    await coord._fetch_current_year(data, today)
+    await coord._fetch_week(data, newest)
+    await coord._fetch_current_year(data, newest)
 
-    assert data.daily_date == date(2025, 2, 11)
-    assert data.week_start == date(2025, 2, 10)
+    assert data.daily_date == date(2025, 2, 9)
+    assert data.week_start == date(2025, 2, 3)
     assert data.month_start == date(2025, 2, 1)
     assert data.year_start == date(2025, 1, 1)
+
+
+async def test_update_data_periods_follow_newest_day(hass: HomeAssistant, freezer: FrozenDateTimeFactory) -> None:
+    """Test a refresh on New Year's Day still reports last week, December and the old year."""
+    freezer.move_to("2025-01-01 12:00:00-08:00")  # a Wednesday, test timezone is US/Pacific
+    api = _mock_api()
+    api.get_year = AsyncMock(return_value={"values": [10.0] * 12})
+    coord = _make_coordinator(hass, api)
+
+    with patch(
+        "custom_components.netz_noe_smartmeter.coordinator.async_import_raw_statistics",
+        new_callable=AsyncMock,
+    ):
+        data = await coord._async_update_data()
+
+    api.get_day.assert_any_call(MOCK_METER_ID, date(2024, 12, 31))
+    api.get_week.assert_called_once_with(MOCK_METER_ID, date(2024, 12, 30), date(2025, 1, 5))
+    assert [c.args[1] for c in api.get_year.call_args_list] == [2024, 2023]
+    assert data.week_start == date(2024, 12, 30)
+    assert data.month_start == date(2024, 12, 1)
+    assert data.year_start == date(2024, 1, 1)
+    assert data.monthly_total == pytest.approx(10.0)
+    assert data.yearly_total == pytest.approx(120.0)
+    assert data.prev_year == 2023
+
+
+async def test_update_data_day_error_does_not_fall_back(hass: HomeAssistant) -> None:
+    """Test a failed request for yesterday leaves the daily total unknown instead of reporting an older day."""
+    api = _mock_api()
+    api.get_day = AsyncMock(side_effect=NetzNoeApiError("boom"))
+    coord = _make_coordinator(hass, api)
+
+    with patch(
+        "custom_components.netz_noe_smartmeter.coordinator.async_import_raw_statistics",
+        new_callable=AsyncMock,
+    ):
+        data = await coord._async_update_data()
+
+    assert api.get_day.call_count == 1
+    assert data.daily_total is None
+    assert data.daily_date is None
+
+
+async def test_update_data_empty_period_totals_are_unknown(hass: HomeAssistant) -> None:
+    """Test all-null week and year responses give unknown totals rather than zero."""
+    api = _mock_api()
+    api.get_week = AsyncMock(return_value={"meteredValues": [None] * 7})
+    api.get_year = AsyncMock(return_value={"values": [None] * 12})
+    coord = _make_coordinator(hass, api)
+
+    with patch(
+        "custom_components.netz_noe_smartmeter.coordinator.async_import_raw_statistics",
+        new_callable=AsyncMock,
+    ):
+        data = await coord._async_update_data()
+
+    assert data.weekly_total is None
+    assert data.monthly_total is None
+    assert data.yearly_total is None
 
 
 async def test_update_data_no_day_data(hass: HomeAssistant) -> None:

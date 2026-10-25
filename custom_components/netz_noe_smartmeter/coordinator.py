@@ -17,6 +17,7 @@ from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
     UpdateFailed,
 )
+from homeassistant.util import dt as dt_util
 
 from .api import (
     NetzNoeApi,
@@ -149,6 +150,10 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
     async def _fetch_all_data(self) -> NetzNoeData:
         """Fetch all data from the API in parallel.
 
+        The portal publishes a day only after it has ended, so periods are
+        anchored on yesterday: the week, month and year sensors report the
+        period containing the newest day the portal can have.
+
         Each helper writes to its own fields on the shared NetzNoeData object.
         _POLL_FATAL_ERRORS propagate immediately.
         NetzNoeApiError is caught per-endpoint so partial data is preserved.
@@ -157,13 +162,14 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
         skipped to keep setup fast. A full refresh is scheduled right after.
         """
         data = NetzNoeData()
-        today = date.today()
+        today = dt_util.now().date()
+        newest = today - timedelta(days=1)
 
         tasks = [
             self._fetch_day(data, today),
-            self._fetch_week(data, today),
-            self._fetch_current_year(data, today),
-            self._fetch_prev_year(data, today),
+            self._fetch_week(data, newest),
+            self._fetch_current_year(data, newest),
+            self._fetch_prev_year(data, newest),
         ]
 
         if self._first_refresh:
@@ -184,7 +190,11 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
         return data
 
     async def _fetch_day(self, data: NetzNoeData, today: date) -> None:
-        """Fetch most recent day data (try yesterday, fall back to 2 days ago)."""
+        """Fetch the newest day (yesterday, or 2 days ago while yesterday is not published yet).
+
+        A failed request does not fall back: reporting an older day again would
+        move last_reset backwards and count that day twice.
+        """
         for days_ago in (1, 2):
             fetch_date = today - timedelta(days=days_ago)
             try:
@@ -209,51 +219,48 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
                 raise
             except NetzNoeApiError as err:
                 _LOGGER.warning("Failed to fetch day data for %s: %s", fetch_date, err)
+                return
 
-    async def _fetch_week(self, data: NetzNoeData, today: date) -> None:
-        """Fetch current week data (Mon-Sun)."""
-        week_start = today - timedelta(days=today.isoweekday() - 1)
+    async def _fetch_week(self, data: NetzNoeData, newest: date) -> None:
+        """Fetch the week (Mon-Sun) containing the newest day."""
+        week_start = newest - timedelta(days=newest.isoweekday() - 1)
         week_end = week_start + timedelta(days=6)
         try:
             week_data = await self.api.get_week(self.meter_id, week_start, week_end)
             weekly_values = week_data.get("meteredValues", [])
             data.weekly_daily_values = weekly_values
             non_null_weekly = [v for v in weekly_values if v is not None]
-            data.weekly_total = round(sum(non_null_weekly), 3) if non_null_weekly else 0.0
+            data.weekly_total = round(sum(non_null_weekly), 3) if non_null_weekly else None
             data.week_start = week_start
-            _LOGGER.debug(
-                "Week data %s to %s: %.3f kWh",
-                week_start,
-                week_end,
-                data.weekly_total,
-            )
+            _LOGGER.debug("Week data %s to %s: %s kWh", week_start, week_end, data.weekly_total)
         except _POLL_FATAL_ERRORS:
             raise
         except NetzNoeApiError as err:
             _LOGGER.warning("Failed to fetch week data: %s", err)
 
-    async def _fetch_current_year(self, data: NetzNoeData, today: date) -> None:
-        """Fetch year data for monthly/yearly totals."""
+    async def _fetch_current_year(self, data: NetzNoeData, newest: date) -> None:
+        """Fetch the year containing the newest day for monthly/yearly totals."""
         try:
-            year_data = await self.api.get_year(self.meter_id, today.year)
+            year_data = await self.api.get_year(self.meter_id, newest.year)
             monthly = year_data.get("values", [])
             data.monthly_values = monthly
 
-            current_month_val = monthly[today.month - 1] if len(monthly) >= today.month else None
+            current_month_val = monthly[newest.month - 1] if len(monthly) >= newest.month else None
             if current_month_val is not None:
                 data.monthly_total = round(current_month_val, 3)
-                data.month_start = today.replace(day=1)
+                data.month_start = newest.replace(day=1)
 
-            data.yearly_total = round(sum(v for v in monthly if v is not None), 3)
-            data.year_start = today.replace(month=1, day=1)
+            non_null_monthly = [v for v in monthly if v is not None]
+            data.yearly_total = round(sum(non_null_monthly), 3) if non_null_monthly else None
+            data.year_start = newest.replace(month=1, day=1)
         except _POLL_FATAL_ERRORS:
             raise
         except NetzNoeApiError as err:
             _LOGGER.warning("Failed to fetch year data: %s", err)
 
-    async def _fetch_prev_year(self, data: NetzNoeData, today: date) -> None:
-        """Fetch previous year data for invoice comparison."""
-        prev_year = today.year - 1
+    async def _fetch_prev_year(self, data: NetzNoeData, newest: date) -> None:
+        """Fetch the year before the newest day for invoice comparison."""
+        prev_year = newest.year - 1
         try:
             prev_data = await self.api.get_year(self.meter_id, prev_year)
             prev_monthly = prev_data.get("values", [])

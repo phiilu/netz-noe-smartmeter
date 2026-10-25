@@ -367,6 +367,5 @@ class NetzNoeBackfillStatusSensor(SensorEntity):
         """Handle backfill progress update."""
         cache = cast(dict[str, object], cast(object, self.__dict__))
         _ = cache.pop("native_value", None)
-        _ = cache.pop("last_reset", None)
         _ = cache.pop("extra_state_attributes", None)
         self.async_write_ha_state()

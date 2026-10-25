@@ -43,10 +43,11 @@ async def test_sum_statistics_follow_period_rollovers(
 ) -> None:
     """Daily and weekly totals compile into a sum that adds every period exactly once.
 
-    Day totals 10, 12, 8, 9 on consecutive days give a sum of 29 after the first
-    value sets the zero point. A correction of the same day (12 -> 12.5) adds
-    only the difference. The weekly total grows 1 -> 3 -> 6 inside one week and
-    restarts at 2 in the next week, so its sum is 2 + 3 + 2 = 7.
+    Polls on Jan 15, 16, 17 and 21 report the days 14, 15, 16 and 20 with totals
+    10, 12, 8 and 9. The first value sets the zero point, so the daily sum is 29.
+    A correction of the same day (12 -> 12.5) adds only the difference. The
+    weekly total grows 1 -> 3 -> 6 inside the week of Jan 13 and restarts at 2 in
+    the week of Jan 20, so its sum is 2 + 3 + 2 = 7.
     """
     freezer.move_to("2025-01-15 06:00:00-08:00")  # Wednesday, test timezone is US/Pacific
     api = MagicMock()
@@ -95,7 +96,7 @@ async def test_sum_statistics_follow_period_rollovers(
         (1, 12.0, 3.0, date(2025, 1, 15), date(2025, 1, 13)),
         (0, 12.5, 3.0, date(2025, 1, 15), date(2025, 1, 13)),  # portal corrected the same day
         (1, 8.0, 6.0, date(2025, 1, 16), date(2025, 1, 13)),
-        (3, 9.0, 2.0, date(2025, 1, 19), date(2025, 1, 20)),  # Monday: new week
+        (4, 9.0, 2.0, date(2025, 1, 20), date(2025, 1, 20)),  # Tuesday: newest day is Monday, new week
     ):
         freezer.tick(timedelta(days=days, minutes=5))
         serve(day_total, week_total)
@@ -109,5 +110,5 @@ async def test_sum_statistics_follow_period_rollovers(
     )
     assert [row["sum"] for row in stats[daily_id]] == pytest.approx([0.0, 12.0, 12.5, 20.5, 29.5])
     assert stats[weekly_id][-1]["sum"] == pytest.approx(7.0)
-    assert stats[daily_id][-1]["last_reset"] == dt_util.start_of_local_day(date(2025, 1, 19)).timestamp()
+    assert stats[daily_id][-1]["last_reset"] == dt_util.start_of_local_day(date(2025, 1, 20)).timestamp()
     assert all(row.get("mean") is None for row in stats[daily_id])
