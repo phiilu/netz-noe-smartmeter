@@ -25,6 +25,7 @@
     "error": {
       "cannot_connect": "Failed to connect to smartmeter.netz-noe.at",
       "invalid_meter_id": "Invalid meter ID format",
+      "maintenance": "The Netz NÖ portal is under maintenance. Try again later.",
       "invalid_auth": "Invalid username or password",
       "unknown": "Unexpected error"
     },

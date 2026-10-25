@@ -12,6 +12,7 @@ from custom_components.netz_noe_smartmeter.api import (
     NetzNoeApi,
     NetzNoeApiError,
     NetzNoeAuthError,
+    NetzNoeMaintenanceError,
     NetzNoeRateLimitError,
 )
 
@@ -64,6 +65,14 @@ class TestAuthenticate:
         api = NetzNoeApi(mock_session)
 
         with pytest.raises(NetzNoeApiError, match="Login failed with status 500"):
+            await api.authenticate("user", "pass")
+
+    async def test_maintenance(self, mock_session: MagicMock) -> None:
+        """Test status 999 raises NetzNoeMaintenanceError."""
+        mock_session.post = MagicMock(return_value=_mock_response(999))
+        api = NetzNoeApi(mock_session)
+
+        with pytest.raises(NetzNoeMaintenanceError, match="under maintenance"):
             await api.authenticate("user", "pass")
 
     async def test_connection_error(self, mock_session: MagicMock) -> None:
@@ -285,6 +294,17 @@ class TestGetErrorPaths:
 
         with pytest.raises(NetzNoeRateLimitError, match="rate limit"):
             await api.get_day("m", date(2025, 1, 15))
+
+    async def test_999_raises_maintenance_error(self, mock_session: MagicMock) -> None:
+        """Test 999 response raises NetzNoeMaintenanceError."""
+        mock_session.get = MagicMock(return_value=_mock_response(999))
+        api = NetzNoeApi(mock_session)
+        api._authenticated = True
+
+        with pytest.raises(NetzNoeMaintenanceError, match="under maintenance"):
+            await api.get_day("m", date(2025, 1, 15))
+
+        assert api.is_authenticated is False
 
     async def test_rate_limit_error_is_api_error_subclass(self) -> None:
         """Test NetzNoeRateLimitError is a subclass of NetzNoeApiError."""

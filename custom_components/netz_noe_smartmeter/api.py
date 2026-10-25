@@ -17,6 +17,7 @@ from .const import (
     ENDPOINT_RAW,
     ENDPOINT_WEEK,
     ENDPOINT_YEAR,
+    PORTAL_URL,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -66,8 +67,15 @@ class NetzNoeAuthError(NetzNoeApiError):
     """Authentication error."""
 
 
+class NetzNoeMaintenanceError(NetzNoeApiError):
+    """Portal is under maintenance (HTTP 999)."""
+
+
 class NetzNoeRateLimitError(NetzNoeApiError):
     """API rate limit exceeded (HTTP 429)."""
+
+
+_MAINTENANCE_MESSAGE = f"Portal is under maintenance (HTTP 999), see {PORTAL_URL}"
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +123,8 @@ class NetzNoeApi:
                 if resp.status == 401:
                     self._authenticated = False
                     raise NetzNoeAuthError("Invalid username or password")
+                if resp.status == 999:
+                    raise NetzNoeMaintenanceError(_MAINTENANCE_MESSAGE)
                 body = await resp.text()
                 raise NetzNoeApiError(f"Login failed with status {resp.status}: {body}")
         except aiohttp.ClientError as err:
@@ -166,6 +176,9 @@ class NetzNoeApi:
                     raise NetzNoeAuthError("Session expired")
                 if resp.status == 429:
                     raise NetzNoeRateLimitError("API rate limit exceeded")
+                if resp.status == 999:
+                    self._authenticated = False
+                    raise NetzNoeMaintenanceError(_MAINTENANCE_MESSAGE)
                 if resp.status != 200:
                     body = await resp.text()
                     raise NetzNoeApiError(f"API error {resp.status} for {endpoint}: {body}")

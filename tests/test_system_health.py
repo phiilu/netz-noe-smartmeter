@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from homeassistant.core import HomeAssistant
 
+from custom_components.netz_noe_smartmeter.const import PORTAL_URL
 from custom_components.netz_noe_smartmeter.system_health import (
-    PORTAL_URL,
     async_register,
     system_health_info,
 )

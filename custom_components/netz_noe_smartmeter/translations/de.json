@@ -25,6 +25,7 @@
     "error": {
       "cannot_connect": "Verbindung zu smartmeter.netz-noe.at fehlgeschlagen",
       "invalid_meter_id": "Ungueltiges Zaehlpunktformat",
+      "maintenance": "Das Netz NÖ Portal wird gerade gewartet. Bitte später erneut versuchen.",
       "invalid_auth": "Benutzername oder Passwort ungültig",
       "unknown": "Unerwarteter Fehler"
     },

@@ -18,11 +18,20 @@ from homeassistant.helpers.update_coordinator import (
     UpdateFailed,
 )
 
-from .api import NetzNoeApi, NetzNoeApiError, NetzNoeAuthError, NetzNoeRateLimitError, RawRecord
+from .api import (
+    NetzNoeApi,
+    NetzNoeApiError,
+    NetzNoeAuthError,
+    NetzNoeMaintenanceError,
+    NetzNoeRateLimitError,
+    RawRecord,
+)
 from .const import CONF_METER_ID, DEFAULT_SCAN_INTERVAL_HOURS, DOMAIN, NetzNoeConfigData
 from .statistics import async_import_raw_statistics
 
 _LOGGER = logging.getLogger(__name__)
+
+_POLL_FATAL_ERRORS = (NetzNoeAuthError, NetzNoeMaintenanceError, NetzNoeRateLimitError)
 
 
 @dataclass
@@ -125,6 +134,8 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
                 data = await self._fetch_all_data()
             except NetzNoeAuthError as err:
                 raise ConfigEntryAuthFailed(str(err)) from err
+        except NetzNoeMaintenanceError as err:
+            raise UpdateFailed(str(err), retry_after=1800) from err
         except NetzNoeRateLimitError as err:
             raise UpdateFailed("API rate limit exceeded", retry_after=300) from err
         except NetzNoeApiError as err:
@@ -135,7 +146,7 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
         """Fetch all data from the API in parallel.
 
         Each helper writes to its own fields on the shared NetzNoeData object.
-        NetzNoeAuthError and NetzNoeRateLimitError propagate immediately.
+        _POLL_FATAL_ERRORS propagate immediately.
         NetzNoeApiError is caught per-endpoint so partial data is preserved.
 
         On the first refresh (during setup), raw data + statistics import are
@@ -189,7 +200,7 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
                     _LOGGER.debug("Day data for %s: %.3f kWh", fetch_date, data.daily_total)
                     return
                 _LOGGER.debug("No day data for %s, trying older date", fetch_date)
-            except (NetzNoeAuthError, NetzNoeRateLimitError):
+            except _POLL_FATAL_ERRORS:
                 raise
             except NetzNoeApiError as err:
                 _LOGGER.warning("Failed to fetch day data for %s: %s", fetch_date, err)
@@ -210,7 +221,7 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
                 week_end,
                 data.weekly_total,
             )
-        except (NetzNoeAuthError, NetzNoeRateLimitError):
+        except _POLL_FATAL_ERRORS:
             raise
         except NetzNoeApiError as err:
             _LOGGER.warning("Failed to fetch week data: %s", err)
@@ -227,7 +238,7 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
                 data.monthly_total = round(current_month_val, 3)
 
             data.yearly_total = round(sum(v for v in monthly if v is not None), 3)
-        except (NetzNoeAuthError, NetzNoeRateLimitError):
+        except _POLL_FATAL_ERRORS:
             raise
         except NetzNoeApiError as err:
             _LOGGER.warning("Failed to fetch year data: %s", err)
@@ -241,7 +252,7 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
             data.prev_year = prev_year
             data.prev_year_monthly_values = prev_monthly
             _LOGGER.debug("Previous year %d data fetched", prev_year)
-        except (NetzNoeAuthError, NetzNoeRateLimitError):
+        except _POLL_FATAL_ERRORS:
             raise
         except NetzNoeApiError as err:
             _LOGGER.debug("No previous year data for %d: %s", prev_year, err)
@@ -251,7 +262,7 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
         raw_start = today - timedelta(days=5)
         try:
             data.raw_records = await self.api.get_raw(self.meter_id, raw_start, today)
-        except (NetzNoeAuthError, NetzNoeRateLimitError):
+        except _POLL_FATAL_ERRORS:
             raise
         except NetzNoeApiError as err:
             _LOGGER.warning("Failed to fetch raw data: %s", err)

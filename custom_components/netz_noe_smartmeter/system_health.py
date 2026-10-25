@@ -8,7 +8,7 @@ from typing import Protocol, cast
 from homeassistant.components import system_health
 from homeassistant.core import HomeAssistant, callback
 
-PORTAL_URL = "https://smartmeter.netz-noe.at"
+from .const import PORTAL_URL
 
 
 class _SystemHealthRegistrationProtocol(Protocol):

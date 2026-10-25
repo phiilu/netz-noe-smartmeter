@@ -5,6 +5,7 @@ from typing import NotRequired, TypedDict
 DOMAIN = "netz_noe_smartmeter"
 
 BASE_URL = "https://smartmeter.netz-noe.at/orchestration"
+PORTAL_URL = "https://smartmeter.netz-noe.at"
 
 # API endpoints (relative to BASE_URL)
 ENDPOINT_DAY = "ConsumptionRecord/Day"
