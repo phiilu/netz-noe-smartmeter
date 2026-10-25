@@ -14,7 +14,19 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
-      - uses: googleapis/release-please-action@v5
+      - id: release
+        uses: googleapis/release-please-action@v5
         with:
           # A PAT lets the required checks run on the release PR; the default token cannot trigger workflows.
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
+      - if: ${{ steps.release.outputs.release_created }}
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.release.outputs.tag_name }}
+      - name: Attach zip
+        if: ${{ steps.release.outputs.release_created }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/build_zip.py "${{ steps.release.outputs.version }}" netz_noe_smartmeter.zip
+          gh release upload "${{ steps.release.outputs.tag_name }}" netz_noe_smartmeter.zip
