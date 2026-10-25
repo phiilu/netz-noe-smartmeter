@@ -16,9 +16,9 @@ def main(version: str, output: str) -> None:
     """Write the zip for the given version."""
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as zf:
         for path in sorted(ROOT.rglob("*")):
-            if not path.is_file() or any(part.startswith((".", "__pycache__")) for part in path.relative_to(ROOT).parts):
-                continue
             name = path.relative_to(ROOT).as_posix()
+            if not path.is_file() or any(part.startswith((".", "__pycache__")) for part in name.split("/")):
+                continue
             if name == "manifest.json":
                 manifest = cast(dict[str, object], json.loads(path.read_text()))
                 manifest["version"] = version
