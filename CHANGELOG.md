@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/phiilu/netz-noe-smartmeter/compare/v0.3.0...v0.3.1) (2026-10-25)
+
+
+### Bug Fixes
+
+* use state class total with last_reset for consumption sensors ([#27](https://github.com/phiilu/netz-noe-smartmeter/issues/27)) ([aac3620](https://github.com/phiilu/netz-noe-smartmeter/commit/aac36206eaa006fc14cf3a41b01c5ee229d4b20b))
+
 ## [0.3.0](https://github.com/phiilu/netz-noe-smartmeter/compare/v0.2.1...v0.3.0) (2026-10-25)
 
 
