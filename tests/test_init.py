@@ -14,6 +14,7 @@ from homeassistant.components.recorder.statistics import async_add_external_stat
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.components.recorder.common import async_wait_recording_done
 
@@ -156,6 +157,7 @@ async def test_setup_and_unload_entry(
     hass: HomeAssistant,
     _patch_aiohttp: AsyncMock,
     _patch_api: AsyncMock,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Test setting up and unloading a config entry."""
     entry = _mock_entry()
@@ -166,6 +168,15 @@ async def test_setup_and_unload_entry(
 
     assert entry.state is ConfigEntryState.LOADED
     assert entry.runtime_data is not None
+
+    # Energy sensors must not trip HA's device class / state class validation
+    entity_id = er.async_get(hass).async_get_entity_id("sensor", DOMAIN, f"{MOCK_METER_ID}_daily_consumption")
+    assert entity_id is not None
+    state = hass.states.get(entity_id)
+    assert state is not None
+    assert state.attributes["state_class"] == "total"
+    assert "last_reset" in state.attributes
+    assert "impossible considering device class" not in caplog.text
 
     # Unload
     await hass.config_entries.async_unload(entry.entry_id)

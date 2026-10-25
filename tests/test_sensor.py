@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 from homeassistant.components.sensor import SensorStateClass
+from homeassistant.util import dt as dt_util
 
 from custom_components.netz_noe_smartmeter.coordinator import BackfillProgress, NetzNoeData
 from custom_components.netz_noe_smartmeter.sensor import (
@@ -59,15 +60,39 @@ class TestSensorValues:
 
 
 class TestSensorStateClass:
-    """Tests for sensor state classes."""
+    """Tests for sensor state classes and last_reset."""
 
-    def test_period_sensors_use_measurement_state_class(self) -> None:
-        """Test period-total sensors use measurement semantics."""
+    def test_period_sensors_use_total_state_class(self) -> None:
+        """Test period-total sensors use total semantics, as required for device class energy."""
         coordinator = MagicMock()
-        assert NetzNoeDailyConsumptionSensor(coordinator, "meter").state_class is SensorStateClass.MEASUREMENT
-        assert NetzNoeWeeklyConsumptionSensor(coordinator, "meter").state_class is SensorStateClass.MEASUREMENT
-        assert NetzNoeMonthlyConsumptionSensor(coordinator, "meter").state_class is SensorStateClass.MEASUREMENT
-        assert NetzNoeYearlyConsumptionSensor(coordinator, "meter").state_class is SensorStateClass.MEASUREMENT
+        assert NetzNoeDailyConsumptionSensor(coordinator, "meter").state_class is SensorStateClass.TOTAL
+        assert NetzNoeWeeklyConsumptionSensor(coordinator, "meter").state_class is SensorStateClass.TOTAL
+        assert NetzNoeMonthlyConsumptionSensor(coordinator, "meter").state_class is SensorStateClass.TOTAL
+        assert NetzNoeYearlyConsumptionSensor(coordinator, "meter").state_class is SensorStateClass.TOTAL
+
+    def test_last_reset_is_period_start(self) -> None:
+        """Test last_reset is the local midnight of each sensor's period start."""
+        data = NetzNoeData(
+            daily_date=date(2025, 1, 14),
+            week_start=date(2025, 1, 13),
+            month_start=date(2025, 1, 1),
+            year_start=date(2025, 1, 1),
+        )
+        for sensor_cls, start in (
+            (NetzNoeDailyConsumptionSensor, date(2025, 1, 14)),
+            (NetzNoeWeeklyConsumptionSensor, date(2025, 1, 13)),
+            (NetzNoeMonthlyConsumptionSensor, date(2025, 1, 1)),
+            (NetzNoeYearlyConsumptionSensor, date(2025, 1, 1)),
+        ):
+            last_reset = _make_sensor(sensor_cls, data).last_reset
+            assert last_reset is not None
+            assert last_reset.tzinfo is not None
+            assert last_reset == dt_util.start_of_local_day(start)
+
+    def test_last_reset_none_without_period(self) -> None:
+        """Test last_reset is None when there is no data or the period is unknown."""
+        assert _make_sensor(NetzNoeDailyConsumptionSensor, None).last_reset is None
+        assert _make_sensor(NetzNoeDailyConsumptionSensor, NetzNoeData()).last_reset is None
 
 
 class TestYearlyAttributes:
@@ -282,10 +307,12 @@ class TestCoordinatorUpdateHooks:
 
         cache = cast(dict[str, object], cast(object, sensor.__dict__))
         cache["extra_state_attributes"] = {"foo": "bar"}
-        sensor.coordinator.data = NetzNoeData(daily_total=2.0)
+        cache["last_reset"] = None
+        sensor.coordinator.data = NetzNoeData(daily_total=2.0, daily_date=date(2025, 1, 14))
 
         with patch.object(sensor, "async_write_ha_state"):
             sensor._handle_coordinator_update()
 
         assert sensor.native_value == 2.0
+        assert sensor.last_reset == dt_util.start_of_local_day(date(2025, 1, 14))
         assert "extra_state_attributes" not in sensor.__dict__

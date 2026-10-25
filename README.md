@@ -58,12 +58,14 @@ Reads your electricity consumption from the Netz NÖ smart meter portal and make
 
 | Sensor | Description |
 |--------|-------------|
-| Daily consumption | Yesterday's total consumption |
-| Weekly consumption | Current week's consumption (Mon–Sun) |
-| Monthly consumption | Current month's consumption |
-| Yearly consumption | Year-to-date consumption (with monthly breakdown as attributes) |
+| Daily consumption | Total of the newest published day, normally yesterday |
+| Weekly consumption | The week (Mon–Sun) containing the newest published day |
+| Monthly consumption | The month containing the newest published day |
+| Yearly consumption | The year containing the newest published day (with monthly breakdown as attributes) |
 | Last updated | Timestamp of the newest data point |
 | Backfill status | Backfill progress/result (diagnostic) |
+
+The portal publishes a day only after it has ended, so the newest data is always from the previous day. The period sensors follow that day: on a Monday the weekly sensor still shows the completed week, on the 1st the monthly sensor still shows the completed month, and they move on the day after. The consumption sensors use state class `total` with `last_reset` at the start of their period, so their long-term statistics add every period exactly once. For the Energy Dashboard, use the imported statistic described below, which has the real hourly timestamps.
 
 ## Button
 
