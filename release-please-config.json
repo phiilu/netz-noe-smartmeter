@@ -11,6 +11,11 @@
           "type": "json",
           "path": "custom_components/netz_noe_smartmeter/manifest.json",
           "jsonpath": "$.version"
+        },
+        {
+          "type": "toml",
+          "path": "uv.lock",
+          "jsonpath": "$.package[?(@.name=='netz-noe-smartmeter')].version"
         }
       ]
     }
