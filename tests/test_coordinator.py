@@ -261,6 +261,7 @@ async def test_fetch_helpers_record_period_starts(hass: HomeAssistant) -> None:
 
     await coord._fetch_day(data, today)
     await coord._fetch_week(data, newest)
+    api.get_week.assert_called_once_with(MOCK_METER_ID, date(2025, 2, 3), date(2025, 2, 10))
     await coord._fetch_current_year(data, newest)
 
     assert data.daily_date == date(2025, 2, 9)
@@ -284,7 +285,7 @@ async def test_update_data_periods_follow_newest_day(hass: HomeAssistant, freeze
         data = await coord._async_update_data()
 
     api.get_day.assert_any_call(MOCK_METER_ID, date(2024, 12, 31))
-    api.get_week.assert_called_once_with(MOCK_METER_ID, date(2024, 12, 30), date(2025, 1, 5))
+    api.get_week.assert_called_once_with(MOCK_METER_ID, date(2024, 12, 30), date(2025, 1, 6))
     assert [c.args for c in api.get_year.call_args_list] == [(MOCK_METER_ID, 2024), (MOCK_METER_ID, 2023)]
     assert data.week_start == date(2024, 12, 30)
     assert data.month_start == date(2024, 12, 1)
