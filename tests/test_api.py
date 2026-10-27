@@ -203,7 +203,7 @@ class TestGetWeekAndYear:
         mock_session.get = MagicMock(return_value=_mock_response(200, [week_data]))
         api = NetzNoeApi(mock_session)
 
-        result = await api.get_week("m", date(2025, 1, 13), date(2025, 1, 19))
+        result = await api.get_week("m", date(2025, 1, 13), date(2025, 1, 20))
 
         assert result == week_data
 
@@ -231,7 +231,7 @@ class TestGetWeekAndYear:
         api = NetzNoeApi(mock_session)
 
         with pytest.raises(NetzNoeApiError, match="Unexpected response format"):
-            await api.get_week("m", date(2025, 1, 13), date(2025, 1, 19))
+            await api.get_week("m", date(2025, 1, 13), date(2025, 1, 20))
 
 
 class TestExtendSession:

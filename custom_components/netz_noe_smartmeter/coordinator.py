@@ -224,16 +224,15 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
     async def _fetch_week(self, data: NetzNoeData, newest: date) -> None:
         """Fetch the week (Mon-Sun) containing the newest day."""
         week_start = newest - timedelta(days=newest.isoweekday() - 1)
-        # The portal treats endDate as exclusive: Mon..Sun needs the next Monday as end
-        week_end = week_start + timedelta(days=7)
+        next_week_start = week_start + timedelta(days=7)
         try:
-            week_data = await self.api.get_week(self.meter_id, week_start, week_end)
+            week_data = await self.api.get_week(self.meter_id, week_start, next_week_start)
             weekly_values = week_data.get("meteredValues", [])
             data.weekly_daily_values = weekly_values
             non_null_weekly = [v for v in weekly_values if v is not None]
             data.weekly_total = round(sum(non_null_weekly), 3) if non_null_weekly else None
             data.week_start = week_start
-            _LOGGER.debug("Week data %s to %s: %s kWh", week_start, week_end, data.weekly_total)
+            _LOGGER.debug("Week data from %s: %s kWh", week_start, data.weekly_total)
         except _POLL_FATAL_ERRORS:
             raise
         except NetzNoeApiError as err:
