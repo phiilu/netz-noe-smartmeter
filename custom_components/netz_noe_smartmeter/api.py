@@ -233,7 +233,7 @@ class NetzNoeApi:
         return []
 
     async def get_week(self, meter_id: str, start_date: date, end_date: date) -> WeekResponse:
-        """Fetch daily totals for a date range (Week endpoint).
+        """Fetch daily totals for a date range (Week endpoint), end_date exclusive.
 
         Returns dict with:
           meteredValues: list of float|None (kWh per day)
