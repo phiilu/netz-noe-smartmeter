@@ -150,9 +150,11 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
     async def _fetch_all_data(self) -> NetzNoeData:
         """Fetch all data from the API in parallel.
 
-        The portal publishes a day only after it has ended, so periods are
-        anchored on yesterday: the week, month and year sensors report the
-        period containing the newest day the portal can have.
+        The portal publishes a day only after it has ended, and usually a few
+        hours later. The week, month and year sensors are anchored on the day
+        the day fetch found, so they keep showing the completed period until
+        the first day of the new one is published. A failed day fetch falls
+        back to yesterday.
 
         Each helper writes to its own fields on the shared NetzNoeData object.
         _POLL_FATAL_ERRORS propagate immediately.
@@ -163,10 +165,11 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
         """
         data = NetzNoeData()
         today = dt_util.now().date()
-        newest = today - timedelta(days=1)
+
+        await self._fetch_day(data, today)
+        newest = data.daily_date or today - timedelta(days=1)
 
         tasks = [
-            self._fetch_day(data, today),
             self._fetch_week(data, newest),
             self._fetch_current_year(data, newest),
             self._fetch_prev_year(data, newest),
