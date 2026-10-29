@@ -296,6 +296,27 @@ async def test_update_data_periods_follow_newest_day(hass: HomeAssistant, freeze
     assert data.prev_year_monthly_values == [10.0] * 12
 
 
+async def test_update_data_periods_follow_fallback_day(hass: HomeAssistant, freezer: FrozenDateTimeFactory) -> None:
+    """Test that while Monday is unpublished, the week stays on the completed one instead of going unknown."""
+    freezer.move_to("2025-02-11 01:00:00-08:00")  # a Tuesday, test timezone is US/Pacific
+    api = _mock_api()
+    api.get_day = AsyncMock(
+        side_effect=[{"meteredValues": [None], "peakDemandTimes": [None]}, MOCK_DAY_RESPONSE],
+    )
+    coord = _make_coordinator(hass, api)
+
+    with patch(
+        "custom_components.netz_noe_smartmeter.coordinator.async_import_raw_statistics",
+        new_callable=AsyncMock,
+    ):
+        data = await coord._async_update_data()
+
+    assert data.daily_date == date(2025, 2, 9)  # Sunday
+    api.get_week.assert_called_once_with(MOCK_METER_ID, date(2025, 2, 3), date(2025, 2, 10))
+    assert data.week_start == date(2025, 2, 3)
+    assert data.month_start == date(2025, 2, 1)
+
+
 async def test_update_data_day_error_does_not_fall_back(hass: HomeAssistant) -> None:
     """Test a failed request for yesterday leaves the daily total unknown instead of reporting an older day."""
     api = _mock_api()
