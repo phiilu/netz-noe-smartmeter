@@ -1,0 +1,55 @@
+name: Report a problem
+description: Something in the Netz NÖ Smart Meter integration doesn't work as expected.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead? Mention the time if it matters.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Integration version
+      description: Shown in HACS, e.g. `0.3.1-beta.4`.
+    validations:
+      required: true
+  - type: input
+    id: last_working_version
+    attributes:
+      label: Last version that worked
+      description: Leave empty if it never worked or you don't know.
+  - type: input
+    id: ha_version
+    attributes:
+      label: Home Assistant version
+      description: Settings → About.
+    validations:
+      required: true
+  - type: input
+    id: meters
+    attributes:
+      label: Meters
+      description: Which meters you set up, e.g. "consumption + feed-in".
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: >-
+        Settings → Devices & services → Netz NÖ Smart Meter → ⋮ next to your meter → Download diagnostics.
+        Your credentials are removed from the file. Drag the file in here.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log lines
+      description: >-
+        Lines mentioning `netz_noe_smartmeter`, with their timestamps. For more detail, use
+        "Enable debug logging" in the integration's ⋮ menu, reproduce the problem, then disable it
+        again to download the log.
+      render: text
+  - type: textarea
+    id: other
+    attributes:
+      label: Anything else?
