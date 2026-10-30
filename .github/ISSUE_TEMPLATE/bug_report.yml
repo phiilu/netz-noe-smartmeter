@@ -1,0 +1,65 @@
+name: Report a problem
+description: Something in the Netz NÖ Smart Meter integration doesn't work as expected.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: >-
+        What did you expect, and what happened instead? Say when it started or when you noticed it,
+        and for an error the time it happened.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Integration version
+      description: Exactly as shown in HACS, e.g. `v0.3.0`.
+    validations:
+      required: true
+  - type: input
+    id: last_working_version
+    attributes:
+      label: Last version that worked
+      description: >-
+        If it broke after an update, the version you had before. Helps find the change that caused it.
+        Leave empty if you don't know.
+  - type: input
+    id: ha_version
+    attributes:
+      label: Home Assistant version
+      description: The Core version under Settings → About, e.g. `2026.10.3`.
+    validations:
+      required: true
+  - type: input
+    id: meters
+    attributes:
+      label: Configured meters
+      description: >-
+        Some problems only happen with more than one meter or with a feed-in meter. How many meters
+        did you add, and what do they measure? E.g. "1 consumption meter" or "consumption + feed-in,
+        same portal account". No meter IDs needed.
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: >-
+        Shows the integration's state and statistics, useful when values look wrong. Settings → Devices
+        & services → Netz NÖ Smart Meter → ⋮ next to the meter with the problem → Download diagnostics.
+        Your login and meter ID are removed from the file. Drag the file in here.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log lines
+      description: >-
+        Show what the integration did and when, useful for errors and missing updates. Copy the lines
+        mentioning `netz_noe_smartmeter` from Settings → System → Logs, with their timestamps. You can
+        replace meter IDs (AT00…) with x. For more detail, use "Enable debug logging" in the
+        integration's ⋮ menu, reproduce the problem and disable it again, which downloads the log.
+      render: text
+  - type: textarea
+    id: other
+    attributes:
+      label: Anything else?
+      description: For example what you already tried. Leave empty if there's nothing to add.
