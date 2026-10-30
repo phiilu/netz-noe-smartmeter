@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Generator
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
@@ -57,22 +57,3 @@ def mock_setup_entry() -> Generator[AsyncMock]:
     """Prevent the created config entry from being set up against the real API."""
     with patch("custom_components.netz_noe_smartmeter.async_setup_entry", return_value=True) as mock:
         yield mock
-
-
-@pytest.fixture
-def mock_api() -> Generator[MagicMock]:
-    """Return a mocked NetzNoeApi."""
-    with patch(
-        "custom_components.netz_noe_smartmeter.config_flow.NetzNoeApi",
-        autospec=True,
-    ) as mock_cls:
-        api = mock_cls.return_value
-        api.authenticate = AsyncMock(return_value=True)
-        api.logout = AsyncMock()
-        api.get_day = AsyncMock(return_value=MOCK_DAY_RESPONSE)
-        api.get_week = AsyncMock(return_value=MOCK_WEEK_RESPONSE)
-        api.get_year = AsyncMock(return_value=MOCK_YEAR_RESPONSE)
-        api.get_raw = AsyncMock(return_value=MOCK_RAW_RESPONSE)
-        api.is_authenticated = True
-        api.invalidate_session = lambda: None
-        yield api

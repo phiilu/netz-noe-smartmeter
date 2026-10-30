@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date
 from unittest.mock import AsyncMock, MagicMock
 
@@ -12,182 +13,236 @@ from custom_components.netz_noe_smartmeter.api import (
     NetzNoeApi,
     NetzNoeApiError,
     NetzNoeAuthError,
+    NetzNoeLoginError,
     NetzNoeMaintenanceError,
     NetzNoeRateLimitError,
 )
 
 
-@pytest.fixture
-def mock_session() -> MagicMock:
-    """Return a mocked aiohttp.ClientSession."""
-    return MagicMock(spec=aiohttp.ClientSession)
-
-
 def _mock_response(status: int = 200, json_data: object | None = None, text: str = "") -> AsyncMock:
-    """Create a mock aiohttp response."""
+    """Create a mock aiohttp response that arrives on the next event loop iteration."""
     resp = AsyncMock()
     resp.status = status
     resp.json = AsyncMock(return_value=json_data)
     resp.text = AsyncMock(return_value=text)
-    # Support async context manager
+
+    async def _arrive() -> AsyncMock:
+        await asyncio.sleep(0)  # parallel requests all go out before the first answer comes back
+        return resp
+
     ctx = AsyncMock()
-    ctx.__aenter__ = AsyncMock(return_value=resp)
+    ctx.__aenter__ = AsyncMock(side_effect=_arrive)
     ctx.__aexit__ = AsyncMock(return_value=False)
     return ctx
+
+
+@pytest.fixture
+def mock_session() -> MagicMock:
+    """Return a mocked aiohttp.ClientSession that accepts the login."""
+    session = MagicMock(spec=aiohttp.ClientSession)
+    session.post = MagicMock(return_value=_mock_response(200))
+    return session
+
+
+@pytest.fixture
+def api(mock_session: MagicMock) -> NetzNoeApi:
+    """Return an API client on the mocked session."""
+    return NetzNoeApi(mock_session, "user", "pass")
 
 
 class TestAuthenticate:
     """Tests for authenticate method."""
 
-    async def test_successful_login(self, mock_session: MagicMock) -> None:
-        """Test successful authentication."""
-        mock_session.post = MagicMock(return_value=_mock_response(200))
-        api = NetzNoeApi(mock_session)
+    async def test_successful_login(self, mock_session: MagicMock, api: NetzNoeApi) -> None:
+        """Test successful authentication sends the credentials."""
+        await api.authenticate()
 
-        result = await api.authenticate("user", "pass")
+        assert mock_session.post.call_args.kwargs["json"] == {"user": "user", "pwd": "pass"}
 
-        assert result is True
-        assert api.is_authenticated is True
-
-    async def test_invalid_credentials(self, mock_session: MagicMock) -> None:
+    async def test_invalid_credentials(self, mock_session: MagicMock, api: NetzNoeApi) -> None:
         """Test 401 raises NetzNoeAuthError."""
         mock_session.post = MagicMock(return_value=_mock_response(401))
-        api = NetzNoeApi(mock_session)
 
         with pytest.raises(NetzNoeAuthError, match="Invalid username or password"):
-            await api.authenticate("user", "wrong")
+            await api.authenticate()
 
-        assert api.is_authenticated is False
-
-    async def test_server_error(self, mock_session: MagicMock) -> None:
-        """Test non-200/401 raises NetzNoeApiError."""
+    async def test_server_error(self, mock_session: MagicMock, api: NetzNoeApi) -> None:
+        """Test non-200/401 raises NetzNoeLoginError."""
         mock_session.post = MagicMock(return_value=_mock_response(500, text="Internal Server Error"))
-        api = NetzNoeApi(mock_session)
 
-        with pytest.raises(NetzNoeApiError, match="Login failed with status 500"):
-            await api.authenticate("user", "pass")
+        with pytest.raises(NetzNoeLoginError, match="Login failed with status 500"):
+            await api.authenticate()
 
-    async def test_maintenance(self, mock_session: MagicMock) -> None:
+    async def test_maintenance(self, mock_session: MagicMock, api: NetzNoeApi) -> None:
         """Test status 999 raises NetzNoeMaintenanceError."""
         mock_session.post = MagicMock(return_value=_mock_response(999))
-        api = NetzNoeApi(mock_session)
 
         with pytest.raises(NetzNoeMaintenanceError, match="under maintenance"):
-            await api.authenticate("user", "pass")
+            await api.authenticate()
 
-    async def test_connection_error(self, mock_session: MagicMock) -> None:
-        """Test connection error raises NetzNoeApiError."""
+    async def test_connection_error(self, mock_session: MagicMock, api: NetzNoeApi) -> None:
+        """Test connection error raises NetzNoeLoginError."""
         mock_session.post = MagicMock(side_effect=aiohttp.ClientError("timeout"))
-        api = NetzNoeApi(mock_session)
 
-        with pytest.raises(NetzNoeApiError, match="Connection error during login"):
-            await api.authenticate("user", "pass")
+        with pytest.raises(NetzNoeLoginError, match="Connection error during login"):
+            await api.authenticate()
 
 
 class TestLogout:
     """Tests for logout method."""
 
-    async def test_logout_clears_auth(self, mock_session: MagicMock) -> None:
-        """Test logout marks session as unauthenticated."""
+    async def test_logout(self, mock_session: MagicMock, api: NetzNoeApi) -> None:
+        """Test logout calls the logout endpoint."""
         mock_session.get = MagicMock(return_value=_mock_response(200))
-        api = NetzNoeApi(mock_session)
-        api._authenticated = True
 
         await api.logout()
 
-        assert api.is_authenticated is False
+        mock_session.get.assert_called_once()
 
-    async def test_logout_handles_error(self, mock_session: MagicMock) -> None:
+    async def test_logout_handles_error(self, mock_session: MagicMock, api: NetzNoeApi) -> None:
         """Test logout doesn't raise on connection error."""
         mock_session.get = MagicMock(side_effect=aiohttp.ClientError())
-        api = NetzNoeApi(mock_session)
-        api._authenticated = True
 
         await api.logout()  # Should not raise
 
-        assert api.is_authenticated is False
 
+class TestSession:
+    """Tests for the session handling around requests."""
 
-class TestInvalidateSession:
-    """Tests for invalidate_session method."""
+    async def test_logs_in_once_before_first_request(self, mock_session: MagicMock, api: NetzNoeApi) -> None:
+        """Test the first request logs in and later requests reuse the session."""
+        mock_session.get = MagicMock(return_value=_mock_response(200, {"meteredValues": []}))
 
-    def test_invalidate_session(self, mock_session: MagicMock) -> None:
-        """Test invalidate_session clears auth state."""
-        api = NetzNoeApi(mock_session)
-        api._authenticated = True
+        await api.get_day("m", date(2025, 1, 15))
+        await api.get_day("m", date(2025, 1, 16))
 
-        api.invalidate_session()
+        assert mock_session.post.call_count == 1
 
-        assert api.is_authenticated is False
+    async def test_expired_session_logs_in_again_and_retries(self, mock_session: MagicMock, api: NetzNoeApi) -> None:
+        """Test a 401 logs in again and repeats the request."""
+        day_data = {"meteredValues": [0.1]}
+        mock_session.get = MagicMock(side_effect=[_mock_response(401), _mock_response(200, day_data)])
+
+        result = await api.get_day("m", date(2025, 1, 15))
+
+        assert result == day_data
+        assert mock_session.post.call_count == 2
+        assert mock_session.get.call_count == 2
+
+    async def test_rejected_credentials_on_new_login_raise_auth_error(
+        self, mock_session: MagicMock, api: NetzNoeApi
+    ) -> None:
+        """Test changed credentials surface as NetzNoeAuthError when the session expires."""
+        mock_session.post = MagicMock(side_effect=[_mock_response(200), _mock_response(401)])
+        mock_session.get = MagicMock(return_value=_mock_response(401))
+
+        with pytest.raises(NetzNoeAuthError):
+            await api.get_day("m", date(2025, 1, 15))
+
+    async def test_401_right_after_login_is_not_an_auth_error(self, mock_session: MagicMock, api: NetzNoeApi) -> None:
+        """Test a 401 after a fresh login raises NetzNoeApiError, so it does not start reauth."""
+        mock_session.get = MagicMock(return_value=_mock_response(401))
+
+        with pytest.raises(NetzNoeApiError, match="Session rejected right after login") as exc_info:
+            await api.get_day("m", date(2025, 1, 15))
+
+        assert not isinstance(exc_info.value, NetzNoeAuthError)
+        assert mock_session.post.call_count == 2
+
+    async def test_parallel_requests_share_logins(self, mock_session: MagicMock, api: NetzNoeApi) -> None:
+        """Test parallel requests share the first login and the new login after the session expired."""
+        responses = [_mock_response(status, {"meteredValues": []}) for status in (401, 401, 401, 200, 200, 200)]
+        mock_session.get = MagicMock(side_effect=responses)
+
+        _ = await asyncio.gather(*(api.get_day("m", date(2025, 1, 15)) for _ in range(3)))
+
+        assert mock_session.post.call_count == 2
+        assert mock_session.get.call_count == 6
+
+    async def test_parallel_requests_share_a_rejected_login(self, mock_session: MagicMock, api: NetzNoeApi) -> None:
+        """Test requests waiting for a rejected login get its error instead of sending the credentials again."""
+        mock_session.post = MagicMock(side_effect=[_mock_response(200), _mock_response(401)])
+        mock_session.get = MagicMock(return_value=_mock_response(401))
+
+        results = await asyncio.gather(
+            *(api.get_day("m", date(2025, 1, 15)) for _ in range(3)),
+            return_exceptions=True,
+        )
+
+        assert all(isinstance(result, NetzNoeAuthError) for result in results)
+        assert mock_session.post.call_count == 2
+        assert mock_session.get.call_count == 3
+
+    async def test_failed_login_is_repeated_before_the_next_request(
+        self, mock_session: MagicMock, api: NetzNoeApi
+    ) -> None:
+        """Test a failed login stops the request and the next request logs in first."""
+        mock_session.post = MagicMock(side_effect=[aiohttp.ClientError("timeout"), _mock_response(200)])
+        mock_session.get = MagicMock(return_value=_mock_response(200, {"meteredValues": []}))
+
+        with pytest.raises(NetzNoeLoginError):
+            await api.get_day("m", date(2025, 1, 15))
+        mock_session.get.assert_not_called()
+
+        await api.get_day("m", date(2025, 1, 15))
+
+        assert mock_session.post.call_count == 2
+        assert mock_session.get.call_count == 1
 
 
 class TestGetDay:
     """Tests for get_day method."""
 
-    async def test_unwraps_list_response(self, mock_session: MagicMock) -> None:
+    async def test_unwraps_list_response(self, mock_session: MagicMock, api: NetzNoeApi) -> None:
         """Test that list responses are unwrapped."""
         day_data = {"meteredValues": [0.1, 0.2]}
         mock_session.get = MagicMock(return_value=_mock_response(200, [day_data]))
-        api = NetzNoeApi(mock_session)
 
         result = await api.get_day("meter1", date(2025, 1, 15))
 
         assert result == day_data
 
-    async def test_dict_response_passthrough(self, mock_session: MagicMock) -> None:
+    async def test_dict_response_passthrough(self, mock_session: MagicMock, api: NetzNoeApi) -> None:
         """Test that dict responses pass through directly."""
         day_data = {"meteredValues": [0.1]}
         mock_session.get = MagicMock(return_value=_mock_response(200, day_data))
-        api = NetzNoeApi(mock_session)
 
         result = await api.get_day("meter1", date(2025, 1, 15))
 
         assert result == day_data
 
-    async def test_unexpected_format_raises(self, mock_session: MagicMock) -> None:
+    async def test_unexpected_format_raises(self, mock_session: MagicMock, api: NetzNoeApi) -> None:
         """Test that unexpected response format raises."""
         mock_session.get = MagicMock(return_value=_mock_response(200, "not a dict"))
-        api = NetzNoeApi(mock_session)
 
         with pytest.raises(NetzNoeApiError, match="Unexpected response format"):
-            await api.get_day("meter1", date(2025, 1, 15))
-
-    async def test_401_raises_auth_error(self, mock_session: MagicMock) -> None:
-        """Test 401 response raises NetzNoeAuthError."""
-        mock_session.get = MagicMock(return_value=_mock_response(401))
-        api = NetzNoeApi(mock_session)
-
-        with pytest.raises(NetzNoeAuthError, match="Session expired"):
             await api.get_day("meter1", date(2025, 1, 15))
 
 
 class TestGetRaw:
     """Tests for get_raw method."""
 
-    async def test_unwraps_nested_list(self, mock_session: MagicMock) -> None:
+    async def test_unwraps_nested_list(self, mock_session: MagicMock, api: NetzNoeApi) -> None:
         """Test nested list [[records]] is unwrapped."""
         records = [{"MeasuredValue": 0.1}]
         mock_session.get = MagicMock(return_value=_mock_response(200, [records]))
-        api = NetzNoeApi(mock_session)
 
         result = await api.get_raw("meter1", date(2025, 1, 1), date(2025, 1, 2))
 
         assert result == records
 
-    async def test_flat_list_passthrough(self, mock_session: MagicMock) -> None:
+    async def test_flat_list_passthrough(self, mock_session: MagicMock, api: NetzNoeApi) -> None:
         """Test flat list passes through."""
         records = [{"MeasuredValue": 0.1}]
         mock_session.get = MagicMock(return_value=_mock_response(200, records))
-        api = NetzNoeApi(mock_session)
 
         result = await api.get_raw("meter1", date(2025, 1, 1), date(2025, 1, 2))
 
         assert result == records
 
-    async def test_non_list_returns_empty(self, mock_session: MagicMock) -> None:
+    async def test_non_list_returns_empty(self, mock_session: MagicMock, api: NetzNoeApi) -> None:
         """Test non-list response returns empty list."""
         mock_session.get = MagicMock(return_value=_mock_response(200, "not a list"))
-        api = NetzNoeApi(mock_session)
 
         result = await api.get_raw("meter1", date(2025, 1, 1), date(2025, 1, 2))
 
@@ -197,114 +252,69 @@ class TestGetRaw:
 class TestGetWeekAndYear:
     """Tests for get_week and get_year methods."""
 
-    async def test_get_week_unwraps(self, mock_session: MagicMock) -> None:
+    async def test_get_week_unwraps(self, mock_session: MagicMock, api: NetzNoeApi) -> None:
         """Test get_week unwraps list response."""
         week_data = {"meteredValues": [1.0]}
         mock_session.get = MagicMock(return_value=_mock_response(200, [week_data]))
-        api = NetzNoeApi(mock_session)
 
         result = await api.get_week("m", date(2025, 1, 13), date(2025, 1, 20))
 
         assert result == week_data
 
-    async def test_get_year_unwraps(self, mock_session: MagicMock) -> None:
+    async def test_get_year_unwraps(self, mock_session: MagicMock, api: NetzNoeApi) -> None:
         """Test get_year unwraps list response."""
         year_data = {"values": [10.0] * 12}
         mock_session.get = MagicMock(return_value=_mock_response(200, [year_data]))
-        api = NetzNoeApi(mock_session)
 
         result = await api.get_year("m", 2025)
 
         assert result == year_data
 
-    async def test_get_year_unexpected_format(self, mock_session: MagicMock) -> None:
+    async def test_get_year_unexpected_format(self, mock_session: MagicMock, api: NetzNoeApi) -> None:
         """Test get_year raises on unexpected format."""
         mock_session.get = MagicMock(return_value=_mock_response(200, 42))
-        api = NetzNoeApi(mock_session)
 
         with pytest.raises(NetzNoeApiError, match="Unexpected response format"):
             await api.get_year("m", 2025)
 
-    async def test_get_week_unexpected_format(self, mock_session: MagicMock) -> None:
+    async def test_get_week_unexpected_format(self, mock_session: MagicMock, api: NetzNoeApi) -> None:
         """Test get_week raises on unexpected format."""
         mock_session.get = MagicMock(return_value=_mock_response(200, "not a dict"))
-        api = NetzNoeApi(mock_session)
 
         with pytest.raises(NetzNoeApiError, match="Unexpected response format"):
             await api.get_week("m", date(2025, 1, 13), date(2025, 1, 20))
 
 
-class TestExtendSession:
-    """Tests for extend_session method."""
-
-    async def test_extend_session_success(self, mock_session: MagicMock) -> None:
-        """Test successful session extension."""
-        mock_session.get = MagicMock(return_value=_mock_response(200))
-        api = NetzNoeApi(mock_session)
-        api._authenticated = True
-
-        await api.extend_session()
-
-        assert api.is_authenticated is True
-
-    async def test_extend_session_non_200(self, mock_session: MagicMock) -> None:
-        """Test non-200 response marks session as unauthenticated."""
-        mock_session.get = MagicMock(return_value=_mock_response(403))
-        api = NetzNoeApi(mock_session)
-        api._authenticated = True
-
-        await api.extend_session()
-
-        assert api.is_authenticated is False
-
-    async def test_extend_session_connection_error(self, mock_session: MagicMock) -> None:
-        """Test connection error marks session as unauthenticated."""
-        mock_session.get = MagicMock(side_effect=aiohttp.ClientError("timeout"))
-        api = NetzNoeApi(mock_session)
-        api._authenticated = True
-
-        await api.extend_session()
-
-        assert api.is_authenticated is False
-
-
 class TestGetErrorPaths:
     """Tests for _get method error paths."""
 
-    async def test_non_200_includes_body(self, mock_session: MagicMock) -> None:
+    async def test_non_200_includes_body(self, mock_session: MagicMock, api: NetzNoeApi) -> None:
         """Test non-200 non-401 response includes body in error message."""
         mock_session.get = MagicMock(return_value=_mock_response(500, text="Internal Server Error"))
-        api = NetzNoeApi(mock_session)
 
         with pytest.raises(NetzNoeApiError, match="API error 500"):
             await api.get_day("m", date(2025, 1, 15))
 
-    async def test_connection_error_wraps(self, mock_session: MagicMock) -> None:
+    async def test_connection_error_wraps(self, mock_session: MagicMock, api: NetzNoeApi) -> None:
         """Test connection error wraps in NetzNoeApiError."""
         mock_session.get = MagicMock(side_effect=aiohttp.ClientError("connect timeout"))
-        api = NetzNoeApi(mock_session)
 
         with pytest.raises(NetzNoeApiError, match="Connection error"):
             await api.get_day("m", date(2025, 1, 15))
 
-    async def test_429_raises_rate_limit_error(self, mock_session: MagicMock) -> None:
+    async def test_429_raises_rate_limit_error(self, mock_session: MagicMock, api: NetzNoeApi) -> None:
         """Test 429 response raises NetzNoeRateLimitError."""
         mock_session.get = MagicMock(return_value=_mock_response(429))
-        api = NetzNoeApi(mock_session)
 
         with pytest.raises(NetzNoeRateLimitError, match="rate limit"):
             await api.get_day("m", date(2025, 1, 15))
 
-    async def test_999_raises_maintenance_error(self, mock_session: MagicMock) -> None:
+    async def test_999_raises_maintenance_error(self, mock_session: MagicMock, api: NetzNoeApi) -> None:
         """Test 999 response raises NetzNoeMaintenanceError."""
         mock_session.get = MagicMock(return_value=_mock_response(999))
-        api = NetzNoeApi(mock_session)
-        api._authenticated = True
 
         with pytest.raises(NetzNoeMaintenanceError, match="under maintenance"):
             await api.get_day("m", date(2025, 1, 15))
-
-        assert api.is_authenticated is False
 
     async def test_rate_limit_error_is_api_error_subclass(self) -> None:
         """Test NetzNoeRateLimitError is a subclass of NetzNoeApiError."""

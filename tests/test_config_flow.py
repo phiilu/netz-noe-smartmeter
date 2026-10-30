@@ -123,7 +123,7 @@ async def test_validate_input_success(hass: HomeAssistant) -> None:
         patch("custom_components.netz_noe_smartmeter.config_flow.NetzNoeApi") as mock_api_cls,
     ):
         api = mock_api_cls.return_value
-        api.authenticate = AsyncMock(return_value=True)
+        api.authenticate = AsyncMock(return_value=None)
         api.logout = AsyncMock(return_value=None)
 
         result = await validate_input(
@@ -137,7 +137,8 @@ async def test_validate_input_success(hass: HomeAssistant) -> None:
 
     assert result == {"title": "Smart Meter 0000654321"}
     mock_client_session.assert_called_once()
-    api.authenticate.assert_awaited_once_with("user@example.com", "secret")
+    mock_api_cls.assert_called_once_with(session, "user@example.com", "secret")
+    api.authenticate.assert_awaited_once_with()
     api.logout.assert_awaited_once()
 
 

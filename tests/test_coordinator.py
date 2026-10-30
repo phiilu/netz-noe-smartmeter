@@ -16,6 +16,7 @@ from custom_components.netz_noe_smartmeter.api import (
     NetzNoeApi,
     NetzNoeApiError,
     NetzNoeAuthError,
+    NetzNoeLoginError,
     NetzNoeMaintenanceError,
     NetzNoeRateLimitError,
 )
@@ -53,10 +54,6 @@ def _make_coordinator(
 def _mock_api(**overrides: AsyncMock) -> MagicMock:
     """Create a mock NetzNoeApi with default successful responses."""
     api = MagicMock(spec=NetzNoeApi)
-    api.authenticate = AsyncMock()
-    api.logout = AsyncMock()
-    api.is_authenticated = True
-    api.invalidate_session = MagicMock()
     api.get_day = AsyncMock(return_value=MOCK_DAY_RESPONSE)
     api.get_week = AsyncMock(return_value=MOCK_WEEK_RESPONSE)
     api.get_year = AsyncMock(return_value=MOCK_YEAR_RESPONSE)
@@ -64,43 +61,6 @@ def _mock_api(**overrides: AsyncMock) -> MagicMock:
     for key, value in overrides.items():
         setattr(api, key, value)
     return api
-
-
-# -- ensure_authenticated --
-
-
-async def test_ensure_authenticated_already_authed(hass: HomeAssistant) -> None:
-    """Test ensure_authenticated is a no-op when already authenticated."""
-    api = _mock_api()
-    coord = _make_coordinator(hass, api)
-
-    await coord.ensure_authenticated()
-
-    api.authenticate.assert_not_awaited()
-
-
-async def test_ensure_authenticated_re_login(hass: HomeAssistant) -> None:
-    """Test ensure_authenticated re-logs in when session expired."""
-    api = _mock_api()
-    api.is_authenticated = False
-    coord = _make_coordinator(hass, api)
-
-    await coord.ensure_authenticated()
-
-    api.authenticate.assert_awaited_once()
-
-
-async def test_ensure_authenticated_raises_auth_failed(
-    hass: HomeAssistant,
-) -> None:
-    """Test ensure_authenticated raises ConfigEntryAuthFailed on bad creds."""
-    api = _mock_api()
-    api.is_authenticated = False
-    api.authenticate = AsyncMock(side_effect=NetzNoeAuthError("wrong password"))
-    coord = _make_coordinator(hass, api)
-
-    with pytest.raises(ConfigEntryAuthFailed):
-        await coord.ensure_authenticated()
 
 
 # -- _async_update_data: happy path --
@@ -137,54 +97,13 @@ async def test_update_data_success(hass: HomeAssistant) -> None:
     mock_import.assert_awaited_once_with(hass, MOCK_METER_ID, MOCK_RAW_RESPONSE)
 
 
-# -- _async_update_data: session expiry + retry --
+# -- _async_update_data: rejected credentials --
 
 
-async def test_update_data_session_expiry_retry_success(
-    hass: HomeAssistant,
-) -> None:
-    """Test that session expiry triggers re-auth and successful retry."""
-    api = _mock_api()
-    # First call to get_day raises auth error (session expired).
-    # The coordinator catches this, invalidates, re-auths, then retries
-    # _fetch_all_data. On the retry, get_day should succeed.
-    call_count = 0
-
-    async def _get_day_with_expiry(*args, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:  # only the very first call fails
-            raise NetzNoeAuthError("session expired")
-        return MOCK_DAY_RESPONSE
-
-    api.get_day = AsyncMock(side_effect=_get_day_with_expiry)
-    coord = _make_coordinator(hass, api)
-
-    with patch(
-        "custom_components.netz_noe_smartmeter.coordinator.async_import_raw_statistics",
-        new_callable=AsyncMock,
-    ):
-        data = await coord._async_update_data()
-
-    # Should have invalidated session and re-authenticated
-    api.invalidate_session.assert_called_once()
-    # Data should still be populated from the retry
-    assert data.daily_total is not None
-
-
-async def test_update_data_session_expiry_retry_fails(
-    hass: HomeAssistant,
-) -> None:
-    """Test that persistent auth failure raises ConfigEntryAuthFailed."""
-    api = _mock_api()
-    api.get_day = AsyncMock(side_effect=NetzNoeAuthError("expired"))
-    api.get_week = AsyncMock(side_effect=NetzNoeAuthError("expired"))
-    api.get_year = AsyncMock(side_effect=NetzNoeAuthError("expired"))
-    api.get_raw = AsyncMock(side_effect=NetzNoeAuthError("expired"))
-    # Re-auth also fails on retry
-    api.is_authenticated = False
-    api.authenticate = AsyncMock(side_effect=NetzNoeAuthError("bad creds"))
-
+@pytest.mark.parametrize("endpoint", ["get_day", "get_week", "get_year", "get_raw"])
+async def test_update_data_auth_error_raises_config_entry_auth_failed(hass: HomeAssistant, endpoint: str) -> None:
+    """Test rejected credentials from any endpoint start reauth instead of counting as a missing endpoint."""
+    api = _mock_api(**{endpoint: AsyncMock(side_effect=NetzNoeAuthError("Invalid username or password"))})
     coord = _make_coordinator(hass, api)
 
     with pytest.raises(ConfigEntryAuthFailed):
@@ -391,106 +310,6 @@ async def test_update_data_statistics_import_failure_non_fatal(
     assert data.raw_records == MOCK_RAW_RESPONSE
 
 
-# -- NetzNoeAuthError re-raises from individual endpoints --
-
-
-async def test_update_data_week_auth_error_triggers_retry(
-    hass: HomeAssistant,
-) -> None:
-    """Test NetzNoeAuthError from get_week triggers retry path."""
-    api = _mock_api()
-    call_count = 0
-
-    async def _get_week_with_auth_error(*args, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            raise NetzNoeAuthError("session expired")
-        return MOCK_WEEK_RESPONSE
-
-    api.get_week = AsyncMock(side_effect=_get_week_with_auth_error)
-    coord = _make_coordinator(hass, api)
-
-    with patch(
-        "custom_components.netz_noe_smartmeter.coordinator.async_import_raw_statistics",
-        new_callable=AsyncMock,
-    ):
-        data = await coord._async_update_data()
-
-    # Retry succeeded — data should be populated
-    api.invalidate_session.assert_called_once()
-    assert data.weekly_total is not None
-
-
-async def test_update_data_year_auth_error_triggers_retry(
-    hass: HomeAssistant,
-) -> None:
-    """Test NetzNoeAuthError from get_year triggers retry path."""
-    api = _mock_api()
-    call_count = 0
-
-    async def _get_year_with_auth_error(*args, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            raise NetzNoeAuthError("session expired")
-        return MOCK_YEAR_RESPONSE
-
-    api.get_year = AsyncMock(side_effect=_get_year_with_auth_error)
-    coord = _make_coordinator(hass, api)
-
-    with patch(
-        "custom_components.netz_noe_smartmeter.coordinator.async_import_raw_statistics",
-        new_callable=AsyncMock,
-    ):
-        data = await coord._async_update_data()
-
-    api.invalidate_session.assert_called_once()
-    assert data.yearly_total is not None
-
-
-async def test_update_data_raw_auth_error_triggers_retry(
-    hass: HomeAssistant,
-) -> None:
-    """Test NetzNoeAuthError from get_raw triggers retry path."""
-    api = _mock_api()
-    call_count = 0
-
-    async def _get_raw_with_auth_error(*args, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            raise NetzNoeAuthError("session expired")
-        return MOCK_RAW_RESPONSE
-
-    api.get_raw = AsyncMock(side_effect=_get_raw_with_auth_error)
-    coord = _make_coordinator(hass, api)
-
-    with patch(
-        "custom_components.netz_noe_smartmeter.coordinator.async_import_raw_statistics",
-        new_callable=AsyncMock,
-    ):
-        data = await coord._async_update_data()
-
-    api.invalidate_session.assert_called_once()
-    assert data.raw_records == MOCK_RAW_RESPONSE
-
-
-async def test_update_data_retry_auth_error_raises_config_entry_auth_failed(
-    hass: HomeAssistant,
-) -> None:
-    """Test persistent auth error on retry raises ConfigEntryAuthFailed."""
-    api = _mock_api()
-    # get_week always raises auth error — triggers retry, and retry also fails
-    api.get_week = AsyncMock(side_effect=NetzNoeAuthError("always expired"))
-    # Re-auth succeeds (so we get past ensure_authenticated)
-    api.is_authenticated = True
-    coord = _make_coordinator(hass, api)
-
-    with pytest.raises(ConfigEntryAuthFailed):
-        await coord._async_update_data()
-
-
 # -- _async_update_data: rate limit handling --
 
 
@@ -560,14 +379,11 @@ async def test_update_data_api_error_all_endpoints_fail(
     assert data.yearly_total is None
 
 
-async def test_update_data_api_error_during_auth_raises_update_failed(
+async def test_update_data_login_error_raises_update_failed(
     hass: HomeAssistant,
 ) -> None:
-    """Test NetzNoeApiError during authentication raises UpdateFailed."""
-    api = _mock_api()
-    api.is_authenticated = False
-    # authenticate() raises NetzNoeApiError (not auth-specific, e.g. network error)
-    api.authenticate = AsyncMock(side_effect=NetzNoeApiError("connection reset"))
+    """Test a login that fails for another reason than credentials aborts the poll."""
+    api = _mock_api(get_day=AsyncMock(side_effect=NetzNoeLoginError("Connection error during login: connection reset")))
     coord = _make_coordinator(hass, api)
 
     with pytest.raises(UpdateFailed, match="connection reset"):

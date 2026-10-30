@@ -10,7 +10,6 @@ from typing import cast, override
 
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import (
@@ -23,6 +22,7 @@ from .api import (
     NetzNoeApi,
     NetzNoeApiError,
     NetzNoeAuthError,
+    NetzNoeLoginError,
     NetzNoeMaintenanceError,
     NetzNoeRateLimitError,
     RawRecord,
@@ -32,7 +32,7 @@ from .statistics import async_import_raw_statistics
 
 _LOGGER = logging.getLogger(__name__)
 
-_POLL_FATAL_ERRORS = (NetzNoeAuthError, NetzNoeMaintenanceError, NetzNoeRateLimitError)
+_POLL_FATAL_ERRORS = (NetzNoeLoginError, NetzNoeMaintenanceError, NetzNoeRateLimitError)
 
 
 @dataclass
@@ -113,32 +113,13 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
         self._first_refresh = True
         self.backfill_progress = BackfillProgress()
 
-    async def ensure_authenticated(self) -> None:
-        """Ensure we have a valid session, re-login if needed."""
-        if not self.api.is_authenticated:
-            try:
-                config_data = cast(NetzNoeConfigData, cast(object, self.config_entry.data))
-                username = config_data[CONF_USERNAME]
-                password = config_data[CONF_PASSWORD]
-                _ = await self.api.authenticate(username, password)
-            except NetzNoeAuthError as err:
-                raise ConfigEntryAuthFailed("Authentication failed. Check credentials.") from err
-
     @override
     async def _async_update_data(self) -> NetzNoeData:
         """Fetch data from the API."""
         try:
-            await self.ensure_authenticated()
             data = await self._fetch_all_data()
-        except NetzNoeAuthError:
-            # Session expired between polls — re-login once and retry
-            _LOGGER.info("Session expired, re-authenticating")
-            self.api.invalidate_session()
-            try:
-                await self.ensure_authenticated()
-                data = await self._fetch_all_data()
-            except NetzNoeAuthError as err:
-                raise ConfigEntryAuthFailed(str(err)) from err
+        except NetzNoeAuthError as err:
+            raise ConfigEntryAuthFailed("Authentication failed. Check credentials.") from err
         except NetzNoeMaintenanceError as err:
             raise UpdateFailed(str(err), retry_after=1800) from err
         except NetzNoeRateLimitError as err:

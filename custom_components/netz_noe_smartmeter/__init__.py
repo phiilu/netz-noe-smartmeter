@@ -15,7 +15,7 @@ else:
     except ImportError:  # pragma: no cover - Home Assistant before 2026.9, run by tests-minimum
         import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
-from homeassistant.const import Platform
+from homeassistant.const import CONF_PASSWORD, CONF_USERNAME, Platform
 from homeassistant.core import (
     HomeAssistant,
     ServiceCall,
@@ -27,11 +27,12 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.typing import ConfigType
 
-from .api import NetzNoeApi
+from .api import NetzNoeApi, NetzNoeApiError
 from .const import CONF_METER_ID, CONF_STATISTIC_ID, DOMAIN, LEGACY_STATISTIC_ID, NetzNoeConfigData
 from .coordinator import NetzNoeCoordinator
 from .sensor import SIGNAL_BACKFILL_PROGRESS
 from .statistics import (
+    BackfillResult,
     async_apply_statistic_name,
     async_backfill_statistics,
     async_statistic_has_data,
@@ -68,7 +69,6 @@ async def async_setup(hass: HomeAssistant, _config: ConfigType) -> bool:
             raise ServiceValidationError("start_year must be an integer")
 
         coord: NetzNoeCoordinator = _get_loaded_entry(hass, call_data).runtime_data
-        await coord.ensure_authenticated()
 
         def on_progress(state: str, chunk: int, total: int, records: int, date_range: str) -> None:
             """Update backfill progress on coordinator and notify sensor."""
@@ -95,6 +95,8 @@ async def async_setup(hass: HomeAssistant, _config: ConfigType) -> bool:
                 start_year=start_year,
                 progress_callback=on_progress,
             )
+        except NetzNoeApiError as err:
+            result = BackfillResult(error=str(err))
         except Exception:
             coord.backfill_progress.state = "failed"
             coord.backfill_progress.result_summary = "Unexpected error during backfill"
@@ -187,7 +189,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: NetzNoeConfigEntry) -> b
     # Create a persistent cookie jar + session for this entry
     jar = aiohttp.CookieJar(unsafe=True)
     session = aiohttp.ClientSession(cookie_jar=jar, timeout=API_REQUEST_TIMEOUT)
-    api = NetzNoeApi(session)
+    config_data = cast(NetzNoeConfigData, cast(object, entry.data))
+    api = NetzNoeApi(session, config_data[CONF_USERNAME], config_data[CONF_PASSWORD])
 
     coordinator = NetzNoeCoordinator(hass, entry, api, session)
 

@@ -24,7 +24,15 @@ from homeassistant.helpers.recorder import get_instance
 from homeassistant.util import dt as dt_util
 from homeassistant.util import slugify
 
-from .api import NetzNoeApi, NetzNoeApiError, NetzNoeRateLimitError, RawRecord
+from .api import (
+    NetzNoeApi,
+    NetzNoeApiError,
+    NetzNoeAuthError,
+    NetzNoeLoginError,
+    NetzNoeMaintenanceError,
+    NetzNoeRateLimitError,
+    RawRecord,
+)
 from .const import CONF_STATISTIC_ID, DOMAIN, NetzNoeConfigData
 
 _LOGGER = logging.getLogger(__name__)
@@ -247,6 +255,8 @@ async def _detect_earliest_data(
                 if val is not None and val > 0:
                     return year, month_idx + 1
             delay = BACKFILL_DELAY_SECONDS  # reset on success
+        except (NetzNoeLoginError, NetzNoeMaintenanceError):
+            raise
         except NetzNoeRateLimitError:
             delay = min(delay * 2, BACKFILL_MAX_DELAY_SECONDS)
             _LOGGER.warning("Rate limited during auto-detect, backing off %ds", delay)
@@ -329,6 +339,8 @@ async def async_backfill_statistics(
                         f"{chunk_start} to {chunk_end}",
                     )
                 break
+            except NetzNoeAuthError:
+                raise
             except NetzNoeRateLimitError:
                 attempt += 1
                 delay = min(delay * 2, BACKFILL_MAX_DELAY_SECONDS)

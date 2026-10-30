@@ -14,7 +14,14 @@ from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.components.recorder.common import async_wait_recording_done
 
-from custom_components.netz_noe_smartmeter.api import NetzNoeApiError, NetzNoeRateLimitError, RawRecord
+from custom_components.netz_noe_smartmeter.api import (
+    NetzNoeApiError,
+    NetzNoeAuthError,
+    NetzNoeLoginError,
+    NetzNoeMaintenanceError,
+    NetzNoeRateLimitError,
+    RawRecord,
+)
 from custom_components.netz_noe_smartmeter.const import CONF_STATISTIC_ID, DOMAIN, LEGACY_STATISTIC_ID
 from custom_components.netz_noe_smartmeter.statistics import (
     _aggregate_to_hourly,
@@ -452,6 +459,28 @@ async def test_detect_earliest_data_api_error_skips() -> None:
     assert result == (2016, 1)
 
 
+@pytest.mark.parametrize(
+    "error",
+    [NetzNoeLoginError("Connection error during login"), NetzNoeMaintenanceError("Portal is under maintenance")],
+    ids=["login", "maintenance"],
+)
+async def test_detect_earliest_data_portal_down_propagates(error: NetzNoeApiError) -> None:
+    """Test a failed login or maintenance is not mistaken for a year without data."""
+    api = MagicMock()
+    api.get_year = AsyncMock(side_effect=error)
+
+    with (
+        patch(
+            "custom_components.netz_noe_smartmeter.statistics.asyncio.sleep",
+            new_callable=AsyncMock,
+        ),
+        pytest.raises(type(error)),
+    ):
+        _ = await _detect_earliest_data(api, "meter1")
+
+    assert api.get_year.await_count == 1
+
+
 # ---------------------------------------------------------------------------
 # async_backfill_statistics
 # ---------------------------------------------------------------------------
@@ -705,6 +734,25 @@ async def test_backfill_chunk_error_after_retries_returns_error(hass: HomeAssist
     assert error is not None
     assert "Backfill failed for chunk" in error
     assert api.get_raw.await_count == 3
+    mock_add.assert_not_called()
+
+
+async def test_backfill_auth_error_is_not_retried(hass: HomeAssistant) -> None:
+    """Test rejected credentials stop the backfill instead of retrying the login."""
+    api = MagicMock()
+    api.get_raw = AsyncMock(side_effect=NetzNoeAuthError("Invalid username or password"))
+
+    with (
+        patch(
+            "custom_components.netz_noe_smartmeter.statistics.asyncio.sleep",
+            new_callable=AsyncMock,
+        ),
+        patch(PATCH_ADD_STATS) as mock_add,
+        pytest.raises(NetzNoeAuthError),
+    ):
+        _ = await async_backfill_statistics(hass, api, "meter1", start_year=2025)
+
+    assert api.get_raw.await_count == 1
     mock_add.assert_not_called()
 
 

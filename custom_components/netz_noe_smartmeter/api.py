@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import date
 from typing import TypedDict, cast
@@ -11,7 +12,6 @@ import aiohttp
 from .const import (
     BASE_URL,
     ENDPOINT_DAY,
-    ENDPOINT_EXTEND_SESSION,
     ENDPOINT_LOGIN,
     ENDPOINT_LOGOUT,
     ENDPOINT_RAW,
@@ -63,8 +63,12 @@ class NetzNoeApiError(Exception):
     """Generic API error."""
 
 
-class NetzNoeAuthError(NetzNoeApiError):
-    """Authentication error."""
+class NetzNoeLoginError(NetzNoeApiError):
+    """Login failed, so no request can succeed."""
+
+
+class NetzNoeAuthError(NetzNoeLoginError):
+    """The portal rejected the credentials."""
 
 
 class NetzNoeMaintenanceError(NetzNoeApiError):
@@ -83,28 +87,48 @@ _MAINTENANCE_MESSAGE = f"Portal is under maintenance (HTTP 999), see {PORTAL_URL
 # ---------------------------------------------------------------------------
 
 
+class _SessionExpiredError(Exception):
+    """The portal answered a request with 401."""
+
+
 class NetzNoeApi:
-    """Async API client for smartmeter.netz-noe.at."""
+    """Async API client for smartmeter.netz-noe.at.
+
+    The client owns the portal session. It logs in before the first request and
+    again when the portal has dropped the session, so callers never see an
+    expired session.
+    """
 
     _session: aiohttp.ClientSession
-    _authenticated: bool
+    _username: str
+    _password: str
+    _login_lock: asyncio.Lock
+    _login_attempts: int
+    _login_error: NetzNoeApiError | None
 
-    def __init__(self, session: aiohttp.ClientSession) -> None:
+    def __init__(self, session: aiohttp.ClientSession, username: str, password: str) -> None:
         """Initialize the API client.
 
         Args:
             session: aiohttp session managed externally (with cookie jar).
+            username: Portal username.
+            password: Portal password.
         """
         self._session = session
-        self._authenticated = False
+        self._username = username
+        self._password = password
+        self._login_lock = asyncio.Lock()
+        self._login_attempts = 0
+        self._login_error = None
 
-    async def authenticate(self, username: str, password: str) -> bool:
+    async def authenticate(self) -> None:
         """Login to the smart meter portal.
 
-        Returns True on success, raises NetzNoeAuthError on failure.
+        Raises NetzNoeAuthError if the portal rejects the credentials and
+        NetzNoeLoginError if the login fails for another reason.
         """
         url = f"{BASE_URL}/{ENDPOINT_LOGIN}"
-        payload = {"user": username, "pwd": password}
+        payload = {"user": self._username, "pwd": self._password}
 
         try:
             async with self._session.post(
@@ -117,18 +141,16 @@ class NetzNoeApi:
                 },
             ) as resp:
                 if resp.status == 200:
-                    self._authenticated = True
                     _LOGGER.debug("Login successful")
-                    return True
+                    return
                 if resp.status == 401:
-                    self._authenticated = False
                     raise NetzNoeAuthError("Invalid username or password")
                 if resp.status == 999:
                     raise NetzNoeMaintenanceError(_MAINTENANCE_MESSAGE)
                 body = await resp.text()
-                raise NetzNoeApiError(f"Login failed with status {resp.status}: {body}")
+                raise NetzNoeLoginError(f"Login failed with status {resp.status}: {body}")
         except aiohttp.ClientError as err:
-            raise NetzNoeApiError(f"Connection error during login: {err}") from err
+            raise NetzNoeLoginError(f"Connection error during login: {err}") from err
 
     async def logout(self) -> None:
         """Logout from the portal."""
@@ -138,31 +160,43 @@ class NetzNoeApi:
                 _LOGGER.debug("Logout status: %s", resp.status)
         except aiohttp.ClientError:
             pass
-        finally:
-            self._authenticated = False
 
-    async def extend_session(self) -> None:
-        """Extend the session lifetime."""
-        url = f"{BASE_URL}/{ENDPOINT_EXTEND_SESSION}"
-        try:
-            async with self._session.get(url) as resp:
-                if resp.status != 200:
-                    _LOGGER.debug("Session extend failed: %s", resp.status)
-                    self._authenticated = False
-        except aiohttp.ClientError:
-            self._authenticated = False
+    async def _login_unless_renewed(self, seen: int) -> None:
+        """Log in, unless another request already tried after login attempt number `seen`.
 
-    @property
-    def is_authenticated(self) -> bool:
-        """Return whether we have an active session."""
-        return self._authenticated
-
-    def invalidate_session(self) -> None:
-        """Mark the session as invalid (e.g. after a 401)."""
-        self._authenticated = False
+        Requests waiting for the same login share its outcome, so rejected
+        credentials are sent once, not once per request.
+        """
+        async with self._login_lock:
+            if self._login_attempts == seen:
+                self._login_attempts += 1
+                self._login_error = None
+                try:
+                    await self.authenticate()
+                except NetzNoeApiError as err:
+                    self._login_error = err
+                    raise
+            elif self._login_error is not None:
+                raise self._login_error
 
     async def _get(self, endpoint: str, params: dict[str, str]) -> object:
-        """Make an authenticated GET request."""
+        """Make a GET request, logging in first if needed and again once if the session expired."""
+        seen = self._login_attempts
+        if seen == 0 or self._login_error is not None:
+            await self._login_unless_renewed(seen)
+            seen = self._login_attempts
+        try:
+            return await self._request(endpoint, params)
+        except _SessionExpiredError:
+            _LOGGER.debug("Session expired, logging in again")
+        await self._login_unless_renewed(seen)
+        try:
+            return await self._request(endpoint, params)
+        except _SessionExpiredError as err:
+            raise NetzNoeApiError(f"Session rejected right after login for {endpoint}") from err
+
+    async def _request(self, endpoint: str, params: dict[str, str]) -> object:
+        """Make a single GET request with the current session."""
         url = f"{BASE_URL}/{endpoint}"
         headers = {
             "Accept": "application/json, text/plain, */*",
@@ -172,12 +206,10 @@ class NetzNoeApi:
         try:
             async with self._session.get(url, params=params, headers=headers) as resp:
                 if resp.status == 401:
-                    self._authenticated = False
-                    raise NetzNoeAuthError("Session expired")
+                    raise _SessionExpiredError
                 if resp.status == 429:
                     raise NetzNoeRateLimitError("API rate limit exceeded")
                 if resp.status == 999:
-                    self._authenticated = False
                     raise NetzNoeMaintenanceError(_MAINTENANCE_MESSAGE)
                 if resp.status != 200:
                     body = await resp.text()

@@ -18,6 +18,7 @@ from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.components.recorder.common import async_wait_recording_done
 
+from custom_components.netz_noe_smartmeter.api import NetzNoeAuthError
 from custom_components.netz_noe_smartmeter.const import CONF_STATISTIC_ID, DOMAIN, LEGACY_STATISTIC_ID
 from custom_components.netz_noe_smartmeter.statistics import statistic_id_for
 
@@ -58,14 +59,10 @@ def _patch_api() -> Generator[MagicMock]:
     """Patch the NetzNoeApi to avoid real network calls."""
     with patch(PATCH_API_CLS) as mock_cls:
         api = mock_cls.return_value
-        api.authenticate = AsyncMock()
-        api.logout = AsyncMock()
         api.get_day = AsyncMock(return_value={"meteredValues": [0.1], "peakDemandTimes": ["2025-01-15T00:15:00"]})
         api.get_week = AsyncMock(return_value={"meteredValues": [1.0]})
         api.get_year = AsyncMock(return_value={"values": [10.0] + [None] * 11})
         api.get_raw = AsyncMock(return_value=[])
-        api.is_authenticated = True
-        api.invalidate_session = MagicMock()
         yield api
 
 
@@ -192,11 +189,8 @@ async def test_setup_entry_auth_failure(
     _patch_aiohttp: AsyncMock,
     _patch_api: AsyncMock,
 ) -> None:
-    """Test that setup fails when initial auth raises."""
-    from custom_components.netz_noe_smartmeter.api import NetzNoeAuthError
-
-    _patch_api.is_authenticated = False
-    _patch_api.authenticate = AsyncMock(side_effect=NetzNoeAuthError("bad creds"))
+    """Test that setup fails when the portal rejects the credentials."""
+    _patch_api.get_day = AsyncMock(side_effect=NetzNoeAuthError("bad creds"))
 
     entry = _mock_entry()
     entry.add_to_hass(hass)
@@ -383,12 +377,22 @@ async def test_backfill_service_invalid_config_entry_id(
         )
 
 
+@pytest.mark.parametrize(
+    ("return_value", "side_effect"),
+    [
+        ({"error": "Something went wrong"}, None),
+        (None, NetzNoeAuthError("Something went wrong")),
+    ],
+    ids=["error_result", "api_error"],
+)
 async def test_backfill_service_error(
     hass: HomeAssistant,
     _patch_aiohttp: AsyncMock,
     _patch_api: AsyncMock,
+    return_value: dict[str, str] | None,
+    side_effect: Exception | None,
 ) -> None:
-    """Test backfill service raises HomeAssistantError when backfill returns error."""
+    """Test a backfill error result or API error fails the service with the error message."""
     entry = _mock_entry()
     entry.add_to_hass(hass)
 
@@ -396,11 +400,9 @@ async def test_backfill_service_error(
     await hass.async_block_till_done()
 
     with (
-        patch(PATCH_BACKFILL, new_callable=AsyncMock) as mock_backfill,
+        patch(PATCH_BACKFILL, new_callable=AsyncMock, return_value=return_value, side_effect=side_effect),
         pytest.raises(HomeAssistantError, match="Something went wrong"),
     ):
-        mock_backfill.return_value = {"error": "Something went wrong"}
-
         await hass.services.async_call(
             DOMAIN,
             "backfill_statistics",
@@ -408,6 +410,10 @@ async def test_backfill_service_error(
             blocking=True,
             return_response=True,
         )
+
+    coordinator = entry.runtime_data
+    assert coordinator.backfill_progress.state == "failed"
+    assert coordinator.backfill_progress.result_summary == "Something went wrong"
 
 
 async def test_backfill_service_unexpected_exception_sets_summary(
