@@ -51,12 +51,8 @@ async def test_sum_statistics_follow_period_rollovers(
     """
     freezer.move_to("2025-01-15 06:00:00-08:00")  # Wednesday, test timezone is US/Pacific
     api = MagicMock()
-    api.authenticate = AsyncMock()
-    api.logout = AsyncMock()
     api.get_year = AsyncMock(return_value={"values": [10.0] + [None] * 11})
     api.get_raw = AsyncMock(return_value=[])
-    api.is_authenticated = True
-    api.invalidate_session = MagicMock()
 
     def serve(day_total: float, week_total: float) -> None:
         api.get_day = AsyncMock(return_value={"meteredValues": [day_total], "peakDemandTimes": ["x"]})

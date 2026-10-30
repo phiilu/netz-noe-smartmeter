@@ -9,7 +9,6 @@ PORTAL_URL = "https://smartmeter.netz-noe.at"
 
 # API endpoints (relative to BASE_URL)
 ENDPOINT_DAY = "ConsumptionRecord/Day"
-ENDPOINT_EXTEND_SESSION = "Authentication/ExtendSessionLifetime"
 ENDPOINT_LOGIN = "Authentication/Login"
 ENDPOINT_LOGOUT = "Authentication/Logout"
 ENDPOINT_RAW = "ConsumptionRecord/Raw"

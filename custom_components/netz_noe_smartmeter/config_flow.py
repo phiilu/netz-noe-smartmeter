@@ -39,8 +39,8 @@ async def validate_input(_hass: HomeAssistant, data: dict[str, str]) -> dict[str
     """Validate the user input by attempting to log in."""
     jar = aiohttp.CookieJar(unsafe=True)
     async with aiohttp.ClientSession(cookie_jar=jar) as session:
-        api = NetzNoeApi(session)
-        _ = await api.authenticate(data[CONF_USERNAME], data[CONF_PASSWORD])
+        api = NetzNoeApi(session, data[CONF_USERNAME], data[CONF_PASSWORD])
+        await api.authenticate()
         _ = await api.logout()
 
     # Return a title for the config entry
