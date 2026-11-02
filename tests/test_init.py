@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable, Generator
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -526,10 +527,14 @@ async def test_migrate_entry_second_meter_gets_own_statistic(
     hass: HomeAssistant,
     _patch_aiohttp: AsyncMock,
     _patch_api: AsyncMock,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Test only one meter can keep the shared statistic."""
+    caplog.set_level(logging.INFO)
     await _add_legacy_statistics(hass)
     other = "AT0020000000000000001000000000002"
 
     assert await _setup_1_1_entry(hass, _mock_entry()) == LEGACY_STATISTIC_ID
     assert await _setup_1_1_entry(hass, _mock_entry(other)) == statistic_id_for(other)
+    logged = " ".join(r.getMessage() for r in caplog.records if r.name.startswith("custom_components."))
+    assert other.lower() not in logged.lower()
