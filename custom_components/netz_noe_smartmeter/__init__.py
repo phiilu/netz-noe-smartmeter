@@ -169,7 +169,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: NetzNoeConfigEntry) ->
         statistic_id = (
             LEGACY_STATISTIC_ID if legacy_has_data and not _legacy_claimed(hass) else statistic_id_for(meter_id)
         )
-        _LOGGER.info("%s uses statistic %s", entry.title, statistic_id)
+        _LOGGER.info("%s keeps the legacy statistic: %s", entry.title, statistic_id == LEGACY_STATISTIC_ID)
         _ = hass.config_entries.async_update_entry(
             entry, data={**entry.data, CONF_STATISTIC_ID: statistic_id}, minor_version=2
         )

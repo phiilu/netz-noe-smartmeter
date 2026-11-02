@@ -286,7 +286,7 @@ async def async_backfill_statistics(
 
     Returns a summary dict with total_intervals, total_kwh, date_range.
     """
-    _LOGGER.info("Starting historical backfill for meter %s", meter_id)
+    _LOGGER.info("Starting historical backfill for meter ending in %s", meter_id[-4:])
 
     if start_year is not None:
         start_date = date(start_year, 1, 1)
@@ -426,11 +426,11 @@ async def async_backfill_statistics(
         async with asyncio.timeout(BACKFILL_CLEAR_CONFIRM_TIMEOUT_SECONDS):
             _ = await done_event.wait()
     except TimeoutError:
-        error = f"Failed to clear existing statistics for {statistic_id}"
+        error = "Failed to clear existing statistics"
         _LOGGER.error("%s", error)
         return BackfillResult(error=error)
 
-    _LOGGER.info("Cleared existing statistics for %s", statistic_id)
+    _LOGGER.info("Cleared existing statistics")
 
     _LOGGER.info(
         "Backfill complete: importing %d hourly entries (%s to %s, total=%.3f kWh)",

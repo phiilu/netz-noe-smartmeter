@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from functools import partial
@@ -486,8 +487,9 @@ async def test_detect_earliest_data_portal_down_propagates(error: NetzNoeApiErro
 # ---------------------------------------------------------------------------
 
 
-async def test_backfill_with_start_year(hass: HomeAssistant) -> None:
+async def test_backfill_with_start_year(hass: HomeAssistant, caplog: pytest.LogCaptureFixture) -> None:
     """Test backfill with explicit start year fetches chunks and imports."""
+    caplog.set_level(logging.INFO, logger="custom_components.netz_noe_smartmeter")
     raw_records = [
         {"MeasuredValue": 0.5, "Endtime": "2025-01-01T10:15:00+00:00"},
         {"MeasuredValue": 0.3, "Endtime": "2025-01-01T10:30:00+00:00"},
@@ -514,6 +516,7 @@ async def test_backfill_with_start_year(hass: HomeAssistant) -> None:
     assert "total_entries" in result
     assert result.get("total_kwh") == pytest.approx(0.8)
     mock_add.assert_called_once()
+    assert "meter1" not in caplog.text
 
 
 async def test_backfill_auto_detect(hass: HomeAssistant) -> None:
@@ -788,7 +791,7 @@ async def test_backfill_clear_timeout_returns_error(hass: HomeAssistant) -> None
         mock_date.side_effect = lambda *args, **kwargs: date(*args, **kwargs)
         result = await async_backfill_statistics(hass, api, "meter1", start_year=2025)
 
-    assert result.get("error") == f"Failed to clear existing statistics for {STATISTIC_ID}"
+    assert result.get("error") == "Failed to clear existing statistics"
     mock_add.assert_not_called()
 
 
