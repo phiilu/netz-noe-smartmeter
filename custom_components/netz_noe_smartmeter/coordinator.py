@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from functools import partial
 from typing import cast, override
 
 import aiohttp
@@ -19,6 +21,7 @@ from homeassistant.helpers.update_coordinator import (
 from homeassistant.util import dt as dt_util
 
 from .api import (
+    EnergyCommunityValues,
     NetzNoeApi,
     NetzNoeApiError,
     NetzNoeAuthError,
@@ -33,6 +36,41 @@ from .statistics import async_import_raw_statistics
 _LOGGER = logging.getLogger(__name__)
 
 _POLL_FATAL_ERRORS = (NetzNoeLoginError, NetzNoeMaintenanceError, NetzNoeRateLimitError)
+
+
+def _total(values: Sequence[float | None]) -> float | None:
+    """Return the rounded sum of the non-null values, or None if there are none."""
+    non_null = [v for v in values if v is not None]
+    return round(sum(non_null), 3) if non_null else None
+
+
+def _month_value(values: list[float | None], month: int) -> float | None:
+    """Return the rounded value for a month (1-12) from a list of monthly values."""
+    value = values[month - 1] if len(values) >= month else None
+    return round(value, 3) if value is not None else None
+
+
+@dataclass(frozen=True)
+class EnergyCommunitySplit:
+    """Energy community (EEG) split of a period's consumption.
+
+    self_coverage is the part covered by the community, grid_leftover the rest from the supplier.
+    """
+
+    self_coverage: float | None
+    grid_leftover: float | None
+
+
+def _split(
+    response: EnergyCommunityValues,
+    reduce: Callable[[list[float | None]], float | None],
+) -> EnergyCommunitySplit | None:
+    """Return the period's energy community split, or None for a meter outside an EEG."""
+    split = EnergyCommunitySplit(
+        self_coverage=reduce(response.get("selfCoverageValues") or []),
+        grid_leftover=reduce(response.get("gridUsageLeftoverValues") or []),
+    )
+    return None if split == EnergyCommunitySplit(None, None) else split
 
 
 @dataclass
@@ -78,6 +116,16 @@ class NetzNoeData:
     last_data_timestamp: str | None = None
     # Raw records for statistics import
     raw_records: list[RawRecord] = field(default_factory=list)
+    # Energy community (EEG) split per period, None for meters outside an EEG
+    daily_split: EnergyCommunitySplit | None = None
+    weekly_split: EnergyCommunitySplit | None = None
+    monthly_split: EnergyCommunitySplit | None = None
+    yearly_split: EnergyCommunitySplit | None = None
+
+    @property
+    def has_energy_community(self) -> bool:
+        """Return whether the portal returned an energy community split for any period."""
+        return any((self.daily_split, self.weekly_split, self.monthly_split, self.yearly_split))
 
 
 class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
@@ -183,15 +231,16 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
             fetch_date = today - timedelta(days=days_ago)
             try:
                 day_data = await self.api.get_day(self.meter_id, fetch_date)
-                values = day_data.get("meteredValues", [])
-                timestamps = day_data.get("peakDemandTimes", [])
+                values = day_data.get("meteredValues") or []
+                timestamps = day_data.get("peakDemandTimes") or []
                 non_null = [v for v in values if v is not None]
 
                 if non_null:
                     data.daily_values = non_null
                     data.daily_timestamps = timestamps
-                    data.daily_total = round(sum(non_null), 3)
+                    data.daily_total = _total(non_null)
                     data.daily_date = fetch_date
+                    data.daily_split = _split(day_data, _total)
 
                     non_null_ts = [t for t in timestamps if t is not None]
                     if non_null_ts:
@@ -211,10 +260,10 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
         next_week_start = week_start + timedelta(days=7)
         try:
             week_data = await self.api.get_week(self.meter_id, week_start, next_week_start)
-            weekly_values = week_data.get("meteredValues", [])
+            weekly_values = week_data.get("meteredValues") or []
             data.weekly_daily_values = weekly_values
-            non_null_weekly = [v for v in weekly_values if v is not None]
-            data.weekly_total = round(sum(non_null_weekly), 3) if non_null_weekly else None
+            data.weekly_total = _total(weekly_values)
+            data.weekly_split = _split(week_data, _total)
             data.week_start = week_start
             _LOGGER.debug("Week data from %s: %s kWh", week_start, data.weekly_total)
         except _POLL_FATAL_ERRORS:
@@ -226,17 +275,16 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
         """Fetch the year containing the newest day for monthly/yearly totals."""
         try:
             year_data = await self.api.get_year(self.meter_id, newest.year)
-            monthly = year_data.get("values", [])
+            monthly = year_data.get("values") or []
             data.monthly_values = monthly
 
-            current_month_val = monthly[newest.month - 1] if len(monthly) >= newest.month else None
-            if current_month_val is not None:
-                data.monthly_total = round(current_month_val, 3)
+            data.monthly_total = _month_value(monthly, newest.month)
+            if data.monthly_total is not None:
                 data.month_start = newest.replace(day=1)
-
-            non_null_monthly = [v for v in monthly if v is not None]
-            data.yearly_total = round(sum(non_null_monthly), 3) if non_null_monthly else None
+                data.monthly_split = _split(year_data, partial(_month_value, month=newest.month))
+            data.yearly_total = _total(monthly)
             data.year_start = newest.replace(month=1, day=1)
+            data.yearly_split = _split(year_data, _total)
         except _POLL_FATAL_ERRORS:
             raise
         except NetzNoeApiError as err:
@@ -246,8 +294,8 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
         """Fetch the year before the newest day for invoice comparison."""
         prev_year = newest.year - 1
         try:
-            prev_data = await self.api.get_year(self.meter_id, prev_year)
-            prev_monthly = prev_data.get("values", [])
+            prev_data = await self.api.get_year(self.meter_id, prev_year, record_shape=False)
+            prev_monthly = prev_data.get("values") or []
             data.prev_year = prev_year
             data.prev_year_monthly_values = prev_monthly
             _LOGGER.debug("Previous year %d data fetched", prev_year)

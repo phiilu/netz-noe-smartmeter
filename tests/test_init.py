@@ -21,9 +21,14 @@ from pytest_homeassistant_custom_component.components.recorder.common import asy
 
 from custom_components.netz_noe_smartmeter.api import NetzNoeAuthError
 from custom_components.netz_noe_smartmeter.const import CONF_STATISTIC_ID, DOMAIN, LEGACY_STATISTIC_ID
+from custom_components.netz_noe_smartmeter.sensor import ENERGY_COMMUNITY_SENSORS
 from custom_components.netz_noe_smartmeter.statistics import statistic_id_for
 
-from .conftest import MOCK_CONFIG_DATA, MOCK_METER_ID
+from .conftest import (
+    MOCK_CONFIG_DATA,
+    MOCK_EEG_RESPONSES,
+    MOCK_METER_ID,
+)
 
 PATCH_API_CLS = "custom_components.netz_noe_smartmeter.NetzNoeApi"
 PATCH_SESSION_CLS = "custom_components.netz_noe_smartmeter.aiohttp.ClientSession"
@@ -183,6 +188,95 @@ async def test_setup_and_unload_entry(
     assert entry.state is ConfigEntryState.NOT_LOADED
     # Session should be closed
     _patch_aiohttp.close.assert_awaited_once()
+
+
+def _energy_community_entity_ids(hass: HomeAssistant) -> dict[str, str | None]:
+    """Return the entity id of each energy community sensor, None if it is not registered."""
+    registry = er.async_get(hass)
+    return {
+        description.key: registry.async_get_entity_id("sensor", DOMAIN, f"{MOCK_METER_ID}_{description.key}")
+        for description in ENERGY_COMMUNITY_SENSORS
+    }
+
+
+def _return_energy_community_split(api: MagicMock) -> None:
+    """Make the mocked API answer like the portal does for an energy community member."""
+    for method, response in MOCK_EEG_RESPONSES.items():
+        setattr(api, method, AsyncMock(return_value=response))
+
+
+async def test_setup_without_energy_community_adds_no_community_sensors(
+    hass: HomeAssistant,
+    _patch_aiohttp: AsyncMock,
+    _patch_api: MagicMock,
+) -> None:
+    """Test meters outside an energy community get no extra sensors."""
+    entry = _mock_entry()
+    entry.add_to_hass(hass)
+
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.LOADED
+    assert all(entity_id is None for entity_id in _energy_community_entity_ids(hass).values())
+
+
+async def test_setup_with_energy_community_adds_community_sensors(
+    hass: HomeAssistant,
+    _patch_aiohttp: AsyncMock,
+    _patch_api: MagicMock,
+) -> None:
+    """Test energy community members get the community share, with the remaining grid consumption disabled."""
+    _return_energy_community_split(_patch_api)
+    entry = _mock_entry()
+    entry.add_to_hass(hass)
+
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    registry = er.async_get(hass)
+    entity_ids = _energy_community_entity_ids(hass)
+    enabled = set()
+    for key, entity_id in entity_ids.items():
+        assert entity_id is not None, key
+        registry_entry = registry.async_get(entity_id)
+        assert registry_entry is not None
+        if registry_entry.disabled_by is None:
+            enabled.add(key)
+    assert enabled == {"daily_self_coverage", "weekly_self_coverage", "monthly_self_coverage", "yearly_self_coverage"}
+
+    daily_id = entity_ids["daily_self_coverage"]
+    assert daily_id is not None
+    state = hass.states.get(daily_id)
+    assert state is not None
+    assert float(state.state) == pytest.approx(9.673)
+
+
+async def test_community_sensors_added_when_split_appears(
+    hass: HomeAssistant,
+    _patch_aiohttp: AsyncMock,
+    _patch_api: MagicMock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test the community sensors appear on the first poll with a split, without a reload."""
+    entry = _mock_entry()
+    entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert _energy_community_entity_ids(hass)["daily_self_coverage"] is None
+
+    _return_energy_community_split(_patch_api)
+    with patch("custom_components.netz_noe_smartmeter.coordinator.async_import_raw_statistics"):
+        await entry.runtime_data.async_refresh()
+        await hass.async_block_till_done()
+        await entry.runtime_data.async_refresh()
+        await hass.async_block_till_done()
+
+    assert all(entity_id is not None for entity_id in _energy_community_entity_ids(hass).values())
+    assert "already exists" not in caplog.text
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    assert entry.state is ConfigEntryState.NOT_LOADED
 
 
 async def test_setup_entry_auth_failure(

@@ -249,8 +249,8 @@ async def _detect_earliest_data(
     delay = BACKFILL_DELAY_SECONDS
     for year in range(2015, date.today().year + 1):
         try:
-            year_data = await api.get_year(meter_id, year)
-            monthly = year_data.get("values", [])
+            year_data = await api.get_year(meter_id, year, record_shape=False)
+            monthly = year_data.get("values") or []
             for month_idx, val in enumerate(monthly):
                 if val is not None and val > 0:
                     return year, month_idx + 1

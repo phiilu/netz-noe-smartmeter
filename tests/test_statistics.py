@@ -346,7 +346,7 @@ async def test_detect_earliest_data_found() -> None:
     # Year 2023: no data; Year 2024: has data in March
     call_count = 0
 
-    async def _get_year(meter_id: str, year: int) -> dict:
+    async def _get_year(meter_id: str, year: int, *, record_shape: bool = True) -> dict:
         nonlocal call_count
         call_count += 1
         if year < 2024:
@@ -369,6 +369,8 @@ async def test_detect_earliest_data_found() -> None:
         result = await _detect_earliest_data(api, "meter1")
 
     assert result == (2024, 3)
+    # Probing old years must not replace the poll's response structure in the diagnostics
+    assert all(call.kwargs == {"record_shape": False} for call in api.get_year.call_args_list)
 
 
 async def test_detect_earliest_data_not_found() -> None:
@@ -397,7 +399,7 @@ async def test_detect_earliest_data_rate_limit_backs_off() -> None:
     api = MagicMock()
     call_count = 0
 
-    async def _get_year(meter_id: str, year: int) -> dict:
+    async def _get_year(meter_id: str, year: int, *, record_shape: bool = True) -> dict:
         nonlocal call_count
         call_count += 1
         if year == 2015:
@@ -435,7 +437,7 @@ async def test_detect_earliest_data_api_error_skips() -> None:
     api = MagicMock()
     call_count = 0
 
-    async def _get_year(meter_id: str, year: int) -> dict:
+    async def _get_year(meter_id: str, year: int, *, record_shape: bool = True) -> dict:
         nonlocal call_count
         call_count += 1
         if year == 2015:
