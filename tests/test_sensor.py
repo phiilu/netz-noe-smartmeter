@@ -9,10 +9,12 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 from homeassistant.components.sensor import SensorStateClass
 from homeassistant.util import dt as dt_util
 
-from custom_components.netz_noe_smartmeter.coordinator import BackfillProgress, NetzNoeData
+from custom_components.netz_noe_smartmeter.coordinator import BackfillProgress, EnergyCommunitySplit, NetzNoeData
 from custom_components.netz_noe_smartmeter.sensor import (
+    ENERGY_COMMUNITY_SENSORS,
     NetzNoeBackfillStatusSensor,
     NetzNoeDailyConsumptionSensor,
+    NetzNoeEnergyCommunitySensor,
     NetzNoeLastUpdatedSensor,
     NetzNoeMonthlyConsumptionSensor,
     NetzNoeSensorBase,
@@ -93,6 +95,65 @@ class TestSensorStateClass:
         """Test last_reset is None when there is no data or the period is unknown."""
         assert _make_sensor(NetzNoeDailyConsumptionSensor, None).last_reset is None
         assert _make_sensor(NetzNoeDailyConsumptionSensor, NetzNoeData()).last_reset is None
+
+
+class TestEnergyCommunitySensors:
+    """Tests for the energy community share and remaining grid consumption sensors."""
+
+    @staticmethod
+    def _sensors(data: NetzNoeData | None) -> dict[str, NetzNoeEnergyCommunitySensor]:
+        """Create all energy community sensors on a fake coordinator."""
+        coordinator = MagicMock()
+        coordinator.data = data
+        return {
+            description.key: NetzNoeEnergyCommunitySensor(coordinator, "meter", description)
+            for description in ENERGY_COMMUNITY_SENSORS
+        }
+
+    def test_values_and_period_starts(self) -> None:
+        """Test each sensor reports its period's split with last_reset at the period start."""
+        periods = {
+            "daily": (date(2026, 11, 14), EnergyCommunitySplit(9.673, 23.778)),
+            "weekly": (date(2026, 11, 9), EnergyCommunitySplit(16.454, 200.374)),
+            "monthly": (date(2026, 11, 1), EnergyCommunitySplit(32.585, 473.809)),
+            "yearly": (date(2026, 1, 1), EnergyCommunitySplit(82.585, 1123.809)),
+        }
+        data = NetzNoeData(
+            daily_date=periods["daily"][0],
+            week_start=periods["weekly"][0],
+            month_start=periods["monthly"][0],
+            year_start=periods["yearly"][0],
+            daily_split=periods["daily"][1],
+            weekly_split=periods["weekly"][1],
+            monthly_split=periods["monthly"][1],
+            yearly_split=periods["yearly"][1],
+        )
+        sensors = self._sensors(data)
+
+        assert len(sensors) == 8
+        for period, (start, split) in periods.items():
+            assert sensors[f"{period}_self_coverage"].native_value == split.self_coverage
+            assert sensors[f"{period}_grid_leftover"].native_value == split.grid_leftover
+            for kind in ("self_coverage", "grid_leftover"):
+                sensor = sensors[f"{period}_{kind}"]
+                assert sensor.last_reset == dt_util.start_of_local_day(start)
+                assert sensor.state_class is SensorStateClass.TOTAL
+
+    def test_unknown_without_split(self) -> None:
+        """Test the sensors are unknown without data or without a split for their period."""
+        for data in (None, NetzNoeData(daily_date=date(2026, 11, 14))):
+            for sensor in self._sensors(data).values():
+                assert sensor.native_value is None
+
+    def test_only_community_share_enabled_by_default(self) -> None:
+        """Test the remaining grid consumption sensors start disabled."""
+        enabled = {key for key, sensor in self._sensors(None).items() if sensor.entity_registry_enabled_default}
+        assert enabled == {
+            "daily_self_coverage",
+            "weekly_self_coverage",
+            "monthly_self_coverage",
+            "yearly_self_coverage",
+        }
 
 
 class TestYearlyAttributes:

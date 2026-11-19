@@ -21,11 +21,12 @@ from custom_components.netz_noe_smartmeter.api import (
     NetzNoeRateLimitError,
 )
 from custom_components.netz_noe_smartmeter.const import DOMAIN
-from custom_components.netz_noe_smartmeter.coordinator import NetzNoeCoordinator, NetzNoeData
+from custom_components.netz_noe_smartmeter.coordinator import EnergyCommunitySplit, NetzNoeCoordinator, NetzNoeData
 
 from .conftest import (
     MOCK_CONFIG_DATA,
     MOCK_DAY_RESPONSE,
+    MOCK_EEG_RESPONSES,
     MOCK_METER_ID,
     MOCK_RAW_RESPONSE,
     MOCK_WEEK_RESPONSE,
@@ -95,6 +96,82 @@ async def test_update_data_success(hass: HomeAssistant) -> None:
     # Raw records are imported as statistics
     assert data.raw_records == MOCK_RAW_RESPONSE
     mock_import.assert_awaited_once_with(hass, MOCK_METER_ID, MOCK_RAW_RESPONSE)
+
+
+async def test_update_data_without_energy_community(hass: HomeAssistant) -> None:
+    """Test a meter outside an energy community has no split for any period."""
+    coord = _make_coordinator(hass, _mock_api())
+
+    with patch(
+        "custom_components.netz_noe_smartmeter.coordinator.async_import_raw_statistics",
+        new_callable=AsyncMock,
+    ):
+        data = await coord._async_update_data()
+
+    assert not data.has_energy_community
+
+
+async def test_update_data_null_fields(hass: HomeAssistant) -> None:
+    """Test fields the portal sends as null count as empty instead of failing the poll."""
+    nulls = {"meteredValues": None, "values": None, "selfCoverageValues": None, "gridUsageLeftoverValues": None}
+    api = _mock_api(
+        get_day=AsyncMock(
+            return_value={**MOCK_DAY_RESPONSE, "selfCoverageValues": None, "gridUsageLeftoverValues": None}
+        ),
+        get_week=AsyncMock(return_value=nulls),
+        get_year=AsyncMock(return_value=nulls),
+    )
+    coord = _make_coordinator(hass, api)
+
+    with patch(
+        "custom_components.netz_noe_smartmeter.coordinator.async_import_raw_statistics",
+        new_callable=AsyncMock,
+    ):
+        data = await coord._async_update_data()
+
+    assert data.daily_total == pytest.approx(0.6)
+    assert data.weekly_total is None
+    assert data.yearly_total is None
+    assert not data.has_energy_community
+
+
+async def test_update_data_monthly_split_needs_month_total(hass: HomeAssistant, freezer: FrozenDateTimeFactory) -> None:
+    """Test the monthly split is only reported together with its period start."""
+    freezer.move_to("2026-11-15 12:00:00-08:00")
+    year = {**MOCK_EEG_RESPONSES["get_year"], "values": [None] * 12}
+    api = _mock_api(**{method: AsyncMock(return_value=response) for method, response in MOCK_EEG_RESPONSES.items()})
+    api.get_year = AsyncMock(return_value=year)
+    coord = _make_coordinator(hass, api)
+
+    with patch(
+        "custom_components.netz_noe_smartmeter.coordinator.async_import_raw_statistics",
+        new_callable=AsyncMock,
+    ):
+        data = await coord._async_update_data()
+
+    assert data.month_start is None
+    assert data.monthly_split is None
+    assert data.yearly_split == EnergyCommunitySplit(self_coverage=82.585, grid_leftover=1123.809)
+
+
+async def test_update_data_energy_community_split(hass: HomeAssistant, freezer: FrozenDateTimeFactory) -> None:
+    """Test the community share and the remaining grid consumption are summed per period."""
+    freezer.move_to("2026-11-15 12:00:00-08:00")  # a Sunday, the newest day is Saturday 14 Nov
+    api = _mock_api(**{method: AsyncMock(return_value=response) for method, response in MOCK_EEG_RESPONSES.items()})
+    coord = _make_coordinator(hass, api)
+
+    with patch(
+        "custom_components.netz_noe_smartmeter.coordinator.async_import_raw_statistics",
+        new_callable=AsyncMock,
+    ):
+        data = await coord._async_update_data()
+
+    assert data.has_energy_community
+    assert data.daily_total == pytest.approx(33.451)
+    assert data.daily_split == EnergyCommunitySplit(self_coverage=9.673, grid_leftover=23.778)
+    assert data.weekly_split == EnergyCommunitySplit(self_coverage=16.454, grid_leftover=200.374)
+    assert data.monthly_split == EnergyCommunitySplit(self_coverage=32.585, grid_leftover=473.809)
+    assert data.yearly_split == EnergyCommunitySplit(self_coverage=82.585, grid_leftover=1123.809)
 
 
 # -- _async_update_data: rejected credentials --

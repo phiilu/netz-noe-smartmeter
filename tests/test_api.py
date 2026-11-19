@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import date
 from unittest.mock import AsyncMock, MagicMock
 
@@ -16,7 +17,10 @@ from custom_components.netz_noe_smartmeter.api import (
     NetzNoeLoginError,
     NetzNoeMaintenanceError,
     NetzNoeRateLimitError,
+    describe_response,
 )
+
+from .conftest import MOCK_METER_ID
 
 
 def _mock_response(status: int = 200, json_data: object | None = None, text: str = "") -> AsyncMock:
@@ -67,11 +71,12 @@ class TestAuthenticate:
             await api.authenticate()
 
     async def test_server_error(self, mock_session: MagicMock, api: NetzNoeApi) -> None:
-        """Test non-200/401 raises NetzNoeLoginError."""
-        mock_session.post = MagicMock(return_value=_mock_response(500, text="Internal Server Error"))
+        """Test non-200/401 raises NetzNoeLoginError without the body, which can contain account details."""
+        mock_session.post = MagicMock(return_value=_mock_response(500, text="user@example.com locked"))
 
-        with pytest.raises(NetzNoeLoginError, match="Login failed with status 500"):
+        with pytest.raises(NetzNoeLoginError, match="Login failed with status 500") as exc_info:
             await api.authenticate()
+        assert "user@example.com" not in str(exc_info.value)
 
     async def test_maintenance(self, mock_session: MagicMock, api: NetzNoeApi) -> None:
         """Test status 999 raises NetzNoeMaintenanceError."""
@@ -270,6 +275,26 @@ class TestGetWeekAndYear:
 
         assert result == year_data
 
+    async def test_get_week_picks_total_of_energy_communities(self, mock_session: MagicMock, api: NetzNoeApi) -> None:
+        """Test get_week returns the ec_id null total when the meter is in energy communities."""
+        community = {"ec_id": "EC-1", "meteredValues": [0.5], "selfCoverageValues": [0.5]}
+        total = {"ec_id": None, "meteredValues": [1.0], "selfCoverageValues": [0.5]}
+        mock_session.get = MagicMock(return_value=_mock_response(200, [community, total]))
+
+        result = await api.get_week("m", date(2025, 1, 13), date(2025, 1, 20))
+
+        assert result == total
+
+    async def test_get_year_falls_back_to_first_entry(self, mock_session: MagicMock, api: NetzNoeApi) -> None:
+        """Test get_year returns the first entry when none is marked as the total."""
+        first = {"ec_id": "EC-1", "values": [1.0] * 12}
+        second = {"ec_id": "EC-2", "values": [2.0] * 12}
+        mock_session.get = MagicMock(return_value=_mock_response(200, ["noise", first, second]))
+
+        result = await api.get_year("m", 2025)
+
+        assert result == first
+
     async def test_get_year_unexpected_format(self, mock_session: MagicMock, api: NetzNoeApi) -> None:
         """Test get_year raises on unexpected format."""
         mock_session.get = MagicMock(return_value=_mock_response(200, 42))
@@ -285,15 +310,76 @@ class TestGetWeekAndYear:
             await api.get_week("m", date(2025, 1, 13), date(2025, 1, 20))
 
 
+_EEG_WEEK_RESPONSE = [
+    {
+        "MeterID": MOCK_METER_ID,
+        "ec_id": None,
+        "Consumption": True,
+        "meteredValues": [36.828, 26.577, None],
+        "selfCoverageValues": [0.095, 0.096, None],
+    },
+    {"MeterID": MOCK_METER_ID, "ec_id": "EC-1", "selfCoverageValues": [0.095, 0.096, None]},
+]
+
+
+class TestResponseShapes:
+    """Tests for recording the structure of portal responses for diagnostics."""
+
+    def test_describe_keeps_structure_and_drops_identifiers(self) -> None:
+        """Test the structure keeps keys, entries and reading statistics but no identifiers."""
+        assert describe_response(_EEG_WEEK_RESPONSE) == [
+            {
+                "MeterID": "str",
+                "ec_id": None,
+                "Consumption": "bool",
+                "meteredValues": "3 values, 2 set, min 26.577, max 36.828, sum 63.405",
+                "selfCoverageValues": "3 values, 2 set, min 0.095, max 0.096, sum 0.191",
+            },
+            {
+                "MeterID": "str",
+                "ec_id": "str",
+                "selfCoverageValues": "3 values, 2 set, min 0.095, max 0.096, sum 0.191",
+            },
+        ]
+        assert describe_response({"peakDemandTimes": ["2026-11-14T00:15:00", None], "values": []}) == {
+            "peakDemandTimes": "2 values, 1 set",
+            "values": "0 values, 0 set",
+        }
+
+    async def test_records_each_endpoint(
+        self, mock_session: MagicMock, api: NetzNoeApi, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test the client keeps the newest structure per endpoint and logs it without the meter id."""
+        mock_session.get = MagicMock(return_value=_mock_response(200, _EEG_WEEK_RESPONSE))
+
+        with caplog.at_level(logging.DEBUG, logger="custom_components.netz_noe_smartmeter.api"):
+            _ = await api.get_day(MOCK_METER_ID, date(2026, 11, 14))
+            _ = await api.get_week(MOCK_METER_ID, date(2026, 11, 9), date(2026, 11, 16))
+            _ = await api.get_year(MOCK_METER_ID, 2026)
+            _ = await api.get_year(MOCK_METER_ID, 2015, record_shape=False)
+
+        assert set(api.response_shapes) == {
+            "ConsumptionRecord/Day",
+            "ConsumptionRecord/Week",
+            "ConsumptionRecord/Year",
+        }
+        assert caplog.text.count("Response structure of ConsumptionRecord/Year") == 1
+        assert api.response_shapes["ConsumptionRecord/Week"] == describe_response(_EEG_WEEK_RESPONSE)
+        assert "Response structure of ConsumptionRecord/Week" in caplog.text
+        assert MOCK_METER_ID not in caplog.text
+        assert MOCK_METER_ID not in str(api.response_shapes)
+
+
 class TestGetErrorPaths:
     """Tests for _get method error paths."""
 
-    async def test_non_200_includes_body(self, mock_session: MagicMock, api: NetzNoeApi) -> None:
-        """Test non-200 non-401 response includes body in error message."""
-        mock_session.get = MagicMock(return_value=_mock_response(500, text="Internal Server Error"))
+    async def test_non_200_leaves_out_body(self, mock_session: MagicMock, api: NetzNoeApi) -> None:
+        """Test the error message has the status but not the body, which can echo the meter id."""
+        mock_session.get = MagicMock(return_value=_mock_response(500, text=f"Invalid meterId {MOCK_METER_ID}"))
 
-        with pytest.raises(NetzNoeApiError, match="API error 500"):
-            await api.get_day("m", date(2025, 1, 15))
+        with pytest.raises(NetzNoeApiError, match="API error 500") as exc_info:
+            await api.get_day(MOCK_METER_ID, date(2025, 1, 15))
+        assert MOCK_METER_ID not in str(exc_info.value)
 
     async def test_connection_error_wraps(self, mock_session: MagicMock, api: NetzNoeApi) -> None:
         """Test connection error wraps in NetzNoeApiError."""

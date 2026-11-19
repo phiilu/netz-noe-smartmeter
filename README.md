@@ -19,6 +19,7 @@ Reads your electricity consumption from the Netz NÖ smart meter portal and make
 
 - Daily, weekly, monthly, and yearly consumption sensors (kWh)
 - Yearly sensor includes monthly breakdown and previous year comparison
+- Energy community (EEG) share of the consumption for meters in an energy community
 - Backfill status diagnostic sensor with live progress details
 - Manual refresh button to trigger an on-demand update
 - Automatic import of 15-minute interval data as hourly statistics for the Energy Dashboard
@@ -66,6 +67,17 @@ Reads your electricity consumption from the Netz NÖ smart meter portal and make
 | Backfill status | Backfill progress/result (diagnostic) |
 
 The portal publishes a day only after it has ended, so the newest data is always from the previous day. The period sensors follow that day: on a Monday the weekly sensor still shows the completed week, on the 1st the monthly sensor still shows the completed month, and they move on the day after. The consumption sensors use state class `total` with `last_reset` at the start of their period, so their long-term statistics add every period exactly once. For the Energy Dashboard, use the imported statistic described below, which has the real hourly timestamps.
+
+### Energy community (EEG)
+
+If your meter is part of an energy community (Erneuerbare-Energie-Gemeinschaft), the integration adds two sensors per period (daily, weekly, monthly, yearly) on the first update that has community data. Meters outside an energy community don't get them.
+
+| Sensor | Description |
+|--------|-------------|
+| Energy community share | The part of the consumption covered by the energy community (Eigendeckung) |
+| Remaining grid consumption | The rest, supplied by your electricity supplier (Restnetzbezug). Disabled by default |
+
+Both add up to the consumption sensor of the same period. If the meter is in more than one energy community, the share is the total over all of them.
 
 ## Button
 

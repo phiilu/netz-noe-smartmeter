@@ -54,6 +54,30 @@
       "yearly_consumption": {
         "name": "Yearly consumption"
       },
+      "daily_self_coverage": {
+        "name": "Daily energy community share"
+      },
+      "daily_grid_leftover": {
+        "name": "Daily remaining grid consumption"
+      },
+      "weekly_self_coverage": {
+        "name": "Weekly energy community share"
+      },
+      "weekly_grid_leftover": {
+        "name": "Weekly remaining grid consumption"
+      },
+      "monthly_self_coverage": {
+        "name": "Monthly energy community share"
+      },
+      "monthly_grid_leftover": {
+        "name": "Monthly remaining grid consumption"
+      },
+      "yearly_self_coverage": {
+        "name": "Yearly energy community share"
+      },
+      "yearly_grid_leftover": {
+        "name": "Yearly remaining grid consumption"
+      },
       "last_updated": {
         "name": "Last updated"
       },

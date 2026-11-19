@@ -32,5 +32,6 @@ async def async_get_config_entry_diagnostics(
     return {
         "entry_data": _REDACT_DATA(dict(entry.data), TO_REDACT),
         "coordinator_data": asdict(coordinator.data) if coordinator.data else None,
+        "api_responses": coordinator.api.response_shapes,
         "statistics": _REDACT_DATA(await async_get_statistics_diagnostics(hass, coordinator.meter_id), TO_REDACT),
     }

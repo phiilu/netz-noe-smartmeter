@@ -33,6 +33,7 @@ def _make_entry_with_coordinator(
     coordinator = MagicMock(spec=NetzNoeCoordinator)
     coordinator.data = data
     coordinator.meter_id = MOCK_METER_ID
+    coordinator.api = MagicMock(response_shapes={"ConsumptionRecord/Week": [{"MeterID": "str", "ec_id": None}]})
     entry.runtime_data = coordinator
     return entry
 
@@ -68,6 +69,7 @@ async def test_diagnostics_with_data(hass: HomeAssistant) -> None:
     assert isinstance(coordinator_data, dict)
     assert coordinator_data["daily_total"] == 1.5
     assert coordinator_data["yearly_total"] == 100.0
+    assert result["api_responses"] == {"ConsumptionRecord/Week": [{"MeterID": "str", "ec_id": None}]}
 
 
 async def test_diagnostics_no_coordinator_data(hass: HomeAssistant) -> None:

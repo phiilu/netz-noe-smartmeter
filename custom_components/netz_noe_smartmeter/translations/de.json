@@ -54,6 +54,30 @@
       "yearly_consumption": {
         "name": "Jahresverbrauch"
       },
+      "daily_self_coverage": {
+        "name": "Eigendeckung Tag"
+      },
+      "daily_grid_leftover": {
+        "name": "Restnetzbezug Tag"
+      },
+      "weekly_self_coverage": {
+        "name": "Eigendeckung Woche"
+      },
+      "weekly_grid_leftover": {
+        "name": "Restnetzbezug Woche"
+      },
+      "monthly_self_coverage": {
+        "name": "Eigendeckung Monat"
+      },
+      "monthly_grid_leftover": {
+        "name": "Restnetzbezug Monat"
+      },
+      "yearly_self_coverage": {
+        "name": "Eigendeckung Jahr"
+      },
+      "yearly_grid_leftover": {
+        "name": "Restnetzbezug Jahr"
+      },
       "last_updated": {
         "name": "Letztes Update"
       },

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from functools import cached_property
 from typing import TYPE_CHECKING, ClassVar, cast, override
@@ -11,6 +13,7 @@ from typing import TYPE_CHECKING, ClassVar, cast, override
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
+    SensorEntityDescription,
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
@@ -23,7 +26,7 @@ from homeassistant.helpers.update_coordinator import BaseCoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .const import CONF_METER_ID, DOMAIN, NetzNoeConfigData
-from .coordinator import NetzNoeCoordinator, NetzNoeData
+from .coordinator import EnergyCommunitySplit, NetzNoeCoordinator, NetzNoeData
 
 if TYPE_CHECKING:
     from homeassistant.helpers.device_registry import ChildDeviceInfo  # Home Assistant 2026.9+
@@ -53,6 +56,23 @@ async def async_setup_entry(
     ]
 
     async_add_entities(entities)
+
+    energy_community_added = False
+
+    @callback
+    def _async_add_energy_community_sensors() -> None:
+        """Add the energy community sensors once the portal returns a split."""
+        nonlocal energy_community_added
+        data = cast(NetzNoeData | None, coordinator.data)
+        if energy_community_added or data is None or not data.has_energy_community:
+            return
+        energy_community_added = True
+        async_add_entities(
+            NetzNoeEnergyCommunitySensor(coordinator, meter_id, description) for description in ENERGY_COMMUNITY_SENSORS
+        )
+
+    config_entry.async_on_unload(coordinator.async_add_listener(_async_add_energy_community_sensors))
+    _async_add_energy_community_sensors()
 
 
 PARALLEL_UPDATES = 1
@@ -276,6 +296,78 @@ class NetzNoeYearlyConsumptionSensor(NetzNoeConsumptionSensor):
                     attrs[f"{self.MONTH_NAMES[i]}_{prev_year}"] = round(val, 3)
 
         return attrs
+
+
+@dataclass(frozen=True, kw_only=True)
+class NetzNoeEnergyCommunitySensorDescription(SensorEntityDescription):
+    """Describes an energy community sensor: which split value of which period."""
+
+    split_fn: Callable[[NetzNoeData], EnergyCommunitySplit | None]
+    value_fn: Callable[[EnergyCommunitySplit], float | None]
+    period_fn: Callable[[NetzNoeData], date | None]
+
+
+_PERIODS: tuple[
+    tuple[str, Callable[[NetzNoeData], EnergyCommunitySplit | None], Callable[[NetzNoeData], date | None]], ...
+] = (
+    ("daily", lambda d: d.daily_split, lambda d: d.daily_date),
+    ("weekly", lambda d: d.weekly_split, lambda d: d.week_start),
+    ("monthly", lambda d: d.monthly_split, lambda d: d.month_start),
+    ("yearly", lambda d: d.yearly_split, lambda d: d.year_start),
+)
+
+ENERGY_COMMUNITY_SENSORS: tuple[NetzNoeEnergyCommunitySensorDescription, ...] = tuple(
+    description
+    for period, split_fn, period_fn in _PERIODS
+    for description in (
+        NetzNoeEnergyCommunitySensorDescription(
+            key=f"{period}_self_coverage",
+            icon="mdi:home-group",
+            split_fn=split_fn,
+            value_fn=lambda split: split.self_coverage,
+            period_fn=period_fn,
+        ),
+        # Only needed to check the supplier's invoice
+        NetzNoeEnergyCommunitySensorDescription(
+            key=f"{period}_grid_leftover",
+            icon="mdi:transmission-tower",
+            entity_registry_enabled_default=False,
+            split_fn=split_fn,
+            value_fn=lambda split: split.grid_leftover,
+            period_fn=period_fn,
+        ),
+    )
+)
+
+
+class NetzNoeEnergyCommunitySensor(NetzNoeConsumptionSensor):
+    """Sensor for the energy community (EEG) split of a period's consumption."""
+
+    entity_description: NetzNoeEnergyCommunitySensorDescription
+
+    def __init__(
+        self,
+        coordinator: NetzNoeCoordinator,
+        meter_id: str,
+        description: NetzNoeEnergyCommunitySensorDescription,
+    ) -> None:
+        """Initialize."""
+        super().__init__(coordinator, meter_id, description.key)
+        self.entity_description = description  # pyright: ignore[reportIncompatibleVariableOverride]
+
+    @cached_property
+    @override
+    def native_value(self) -> float | None:
+        """Return the energy community value for the period."""
+        data = cast(NetzNoeData | None, self.coordinator.data)
+        if data is None or (split := self.entity_description.split_fn(data)) is None:
+            return None
+        return self.entity_description.value_fn(split)
+
+    @override
+    def _period_start(self, data: NetzNoeData) -> date | None:
+        """Return the first day of the period."""
+        return self.entity_description.period_fn(data)
 
 
 class NetzNoeLastUpdatedSensor(NetzNoeSensorBase):

@@ -28,6 +28,9 @@ _LOGGER = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+type ResponseShape = str | dict[str, ResponseShape] | list[ResponseShape] | None
+
+
 class RawRecord(TypedDict, total=False):
     """A single 15-min measurement record from the raw endpoint."""
 
@@ -35,20 +38,27 @@ class RawRecord(TypedDict, total=False):
     Endtime: str | None
 
 
-class DayResponse(TypedDict, total=False):
+class EnergyCommunityValues(TypedDict, total=False):
+    """Energy community (EEG) split the portal adds to consumption responses, null outside an EEG."""
+
+    gridUsageLeftoverValues: list[float | None]
+    selfCoverageValues: list[float | None]
+
+
+class DayResponse(EnergyCommunityValues, total=False):
     """Day endpoint response: 15-min interval data for one day."""
 
     meteredValues: list[float | None]
     peakDemandTimes: list[str | None]
 
 
-class WeekResponse(TypedDict, total=False):
+class WeekResponse(EnergyCommunityValues, total=False):
     """Week endpoint response: daily totals for a date range."""
 
     meteredValues: list[float | None]
 
 
-class YearResponse(TypedDict, total=False):
+class YearResponse(EnergyCommunityValues, total=False):
     """Year endpoint response: monthly totals for a year."""
 
     values: list[float | None]
@@ -82,6 +92,48 @@ class NetzNoeRateLimitError(NetzNoeApiError):
 _MAINTENANCE_MESSAGE = f"Portal is under maintenance (HTTP 999), see {PORTAL_URL}"
 
 
+def describe_response(data: object) -> ResponseShape:
+    """Return the structure of a portal response without identifiers.
+
+    Responses carry the meter id, so scalars become their type name and lists of
+    readings their length, how many are set, and their min, max and sum. Keys are
+    kept: the portal names fields, never customers.
+    """
+    if data is None:
+        return None
+    if isinstance(data, dict):
+        return {str(key): describe_response(value) for key, value in cast(dict[object, object], data).items()}
+    if isinstance(data, list):
+        items = cast(list[object], data)
+        if any(isinstance(item, dict | list) for item in items):
+            return [describe_response(item) for item in items]
+        shape = f"{len(items)} values, {sum(item is not None for item in items)} set"
+        numbers = [item for item in items if isinstance(item, int | float) and not isinstance(item, bool)]
+        if not numbers:
+            return shape
+        return f"{shape}, min {min(numbers):.3f}, max {max(numbers):.3f}, sum {sum(numbers):.3f}"
+    return type(data).__name__
+
+
+def _total_entry(data: object, endpoint: str) -> dict[str, object]:
+    """Return the meter's total from a consumption response.
+
+    The portal wraps the result in a list. For a meter in energy communities the
+    list has one entry per community and the total has ec_id null; the order is
+    not guaranteed, so the total is looked up and the first entry is the fallback.
+    """
+    if isinstance(data, dict):
+        return cast(dict[str, object], data)
+    entries = (
+        [cast(dict[str, object], e) for e in cast(list[object], data) if isinstance(e, dict)]
+        if isinstance(data, list)
+        else []
+    )
+    if not entries:
+        raise NetzNoeApiError(f"Unexpected response format from {endpoint}")
+    return next((e for e in entries if e.get("ec_id") is None), entries[0])
+
+
 # ---------------------------------------------------------------------------
 # API client
 # ---------------------------------------------------------------------------
@@ -105,6 +157,7 @@ class NetzNoeApi:
     _login_lock: asyncio.Lock
     _login_attempts: int
     _login_error: NetzNoeApiError | None
+    response_shapes: dict[str, ResponseShape]
 
     def __init__(self, session: aiohttp.ClientSession, username: str, password: str) -> None:
         """Initialize the API client.
@@ -120,6 +173,7 @@ class NetzNoeApi:
         self._login_lock = asyncio.Lock()
         self._login_attempts = 0
         self._login_error = None
+        self.response_shapes = {}
 
     async def authenticate(self) -> None:
         """Login to the smart meter portal.
@@ -147,8 +201,7 @@ class NetzNoeApi:
                     raise NetzNoeAuthError("Invalid username or password")
                 if resp.status == 999:
                     raise NetzNoeMaintenanceError(_MAINTENANCE_MESSAGE)
-                body = await resp.text()
-                raise NetzNoeLoginError(f"Login failed with status {resp.status}: {body}")
+                raise NetzNoeLoginError(f"Login failed with status {resp.status}")
         except aiohttp.ClientError as err:
             raise NetzNoeLoginError(f"Connection error during login: {err}") from err
 
@@ -212,11 +265,23 @@ class NetzNoeApi:
                 if resp.status == 999:
                     raise NetzNoeMaintenanceError(_MAINTENANCE_MESSAGE)
                 if resp.status != 200:
-                    body = await resp.text()
-                    raise NetzNoeApiError(f"API error {resp.status} for {endpoint}: {body}")
+                    raise NetzNoeApiError(f"API error {resp.status} for {endpoint}")
                 return cast(object, await resp.json())
         except aiohttp.ClientError as err:
             raise NetzNoeApiError(f"Connection error for {endpoint}: {err}") from err
+
+    async def _get_total(self, endpoint: str, params: dict[str, str], *, record_shape: bool) -> dict[str, object]:
+        """Fetch a consumption endpoint and return the meter's total.
+
+        With record_shape the response structure is kept for diagnostics and logged
+        at debug level.
+        """
+        data = await self._get(endpoint, params)
+        if record_shape:
+            shape = describe_response(data)
+            self.response_shapes[endpoint] = shape
+            _LOGGER.debug("Response structure of %s: %s", endpoint, shape)
+        return _total_entry(data, endpoint)
 
     async def get_day(self, meter_id: str, day: date) -> DayResponse:
         """Fetch 15-min interval data for a single day.
@@ -230,17 +295,7 @@ class NetzNoeApi:
             "meterId": meter_id,
             "day": day.isoformat(),
         }
-        data = await self._get(ENDPOINT_DAY, params)
-
-        # Response may be wrapped in a list — unwrap it
-        if isinstance(data, list):
-            data_list = cast(list[object], data)
-            result: object = data_list[0] if data_list else None
-        else:
-            result = data
-        if not isinstance(result, dict):
-            raise NetzNoeApiError(f"Unexpected response format from {ENDPOINT_DAY}")
-        return cast(DayResponse, cast(object, result))
+        return cast(DayResponse, cast(object, await self._get_total(ENDPOINT_DAY, params, record_shape=True)))
 
     async def get_raw(self, meter_id: str, start_date: date, end_date: date) -> list[RawRecord]:
         """Fetch raw 15-min records for a date range.
@@ -276,19 +331,10 @@ class NetzNoeApi:
             "startDate": start_date.isoformat(),
             "endDate": end_date.isoformat(),
         }
-        data = await self._get(ENDPOINT_WEEK, params)
+        return cast(WeekResponse, cast(object, await self._get_total(ENDPOINT_WEEK, params, record_shape=True)))
 
-        if isinstance(data, list):
-            data_list = cast(list[object], data)
-            result: object = data_list[0] if data_list else None
-        else:
-            result = data
-        if not isinstance(result, dict):
-            raise NetzNoeApiError(f"Unexpected response format from {ENDPOINT_WEEK}")
-        return cast(WeekResponse, cast(object, result))
-
-    async def get_year(self, meter_id: str, year: int) -> YearResponse:
-        """Fetch monthly totals for a year.
+    async def get_year(self, meter_id: str, year: int, *, record_shape: bool = True) -> YearResponse:
+        """Fetch monthly totals for a year, recording the structure for diagnostics unless told otherwise.
 
         Returns dict with:
           values: list of 12 float|None (kWh per month)
@@ -298,13 +344,4 @@ class NetzNoeApi:
             "meterId": meter_id,
             "year": str(year),
         }
-        data = await self._get(ENDPOINT_YEAR, params)
-
-        if isinstance(data, list):
-            data_list = cast(list[object], data)
-            result: object = data_list[0] if data_list else None
-        else:
-            result = data
-        if not isinstance(result, dict):
-            raise NetzNoeApiError(f"Unexpected response format from {ENDPOINT_YEAR}")
-        return cast(YearResponse, cast(object, result))
+        return cast(YearResponse, cast(object, await self._get_total(ENDPOINT_YEAR, params, record_shape=record_shape)))
