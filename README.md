@@ -79,6 +79,8 @@ If your meter is part of an energy community (Erneuerbare-Energie-Gemeinschaft),
 
 Both add up to the consumption sensor of the same period. If the meter is in more than one energy community, the share is the total over all of them.
 
+These sensors don't belong in the Energy Dashboard. The share is already part of the meter's consumption statistic, so adding it as a second grid connection counts it twice, and the sensors only change once a day.
+
 ## Button
 
 | Button | Description |
