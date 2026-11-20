@@ -94,7 +94,7 @@
   "services": {
     "backfill_statistics": {
       "name": "Statistiken nachladen",
-      "description": "Importiert historische 15-Minuten-Smart-Meter-Daten in die Home Assistant Statistiken. Bestehende Statistiken dieser Integration werden davor gelöscht. Der Fortschritt wird im Sensor Datenimport-Status angezeigt.",
+      "description": "Importiert historische 15-Minuten-Smart-Meter-Daten in die Verbrauchsstatistik des Zählers, mit Energiegemeinschaft stattdessen in Eigendeckung und Restnetzbezug. Nur diese werden davor gelöscht, alle anderen Statistiken bleiben unverändert. Der Fortschritt wird im Sensor Datenimport-Status angezeigt.",
       "fields": {
         "config_entry_id": {
           "name": "Zähler-Konfiguration",

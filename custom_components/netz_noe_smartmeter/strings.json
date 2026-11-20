@@ -94,7 +94,7 @@
   "services": {
     "backfill_statistics": {
       "name": "Backfill statistics",
-      "description": "Import historical 15-minute smart meter data into Home Assistant statistics. Existing statistics from this integration are cleared before import. Progress is shown by the Backfill status sensor.",
+      "description": "Import historical 15-minute smart meter data into the meter's consumption statistic, or with Energy community into its two energy community statistics. Only those are cleared before the import, all other statistics stay as they are. Progress is shown by the Backfill status sensor.",
       "fields": {
         "config_entry_id": {
           "name": "Meter configuration",
