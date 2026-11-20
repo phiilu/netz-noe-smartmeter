@@ -304,28 +304,24 @@ class NetzNoeEnergyCommunitySensorDescription(SensorEntityDescription):
 
     split_fn: Callable[[NetzNoeData], EnergyCommunitySplit | None]
     value_fn: Callable[[EnergyCommunitySplit], float | None]
-    period_fn: Callable[[NetzNoeData], date | None]
 
 
-_PERIODS: tuple[
-    tuple[str, Callable[[NetzNoeData], EnergyCommunitySplit | None], Callable[[NetzNoeData], date | None]], ...
-] = (
-    ("daily", lambda d: d.daily_split, lambda d: d.daily_date),
-    ("weekly", lambda d: d.weekly_split, lambda d: d.week_start),
-    ("monthly", lambda d: d.monthly_split, lambda d: d.month_start),
-    ("yearly", lambda d: d.yearly_split, lambda d: d.year_start),
+_PERIODS: tuple[tuple[str, Callable[[NetzNoeData], EnergyCommunitySplit | None]], ...] = (
+    ("daily", lambda d: d.daily_split),
+    ("weekly", lambda d: d.weekly_split),
+    ("monthly", lambda d: d.monthly_split),
+    ("yearly", lambda d: d.yearly_split),
 )
 
 ENERGY_COMMUNITY_SENSORS: tuple[NetzNoeEnergyCommunitySensorDescription, ...] = tuple(
     description
-    for period, split_fn, period_fn in _PERIODS
+    for period, split_fn in _PERIODS
     for description in (
         NetzNoeEnergyCommunitySensorDescription(
             key=f"{period}_self_coverage",
             icon="mdi:home-group",
             split_fn=split_fn,
             value_fn=lambda split: split.self_coverage,
-            period_fn=period_fn,
         ),
         # Only needed to check the supplier's invoice
         NetzNoeEnergyCommunitySensorDescription(
@@ -334,7 +330,6 @@ ENERGY_COMMUNITY_SENSORS: tuple[NetzNoeEnergyCommunitySensorDescription, ...] = 
             entity_registry_enabled_default=False,
             split_fn=split_fn,
             value_fn=lambda split: split.grid_leftover,
-            period_fn=period_fn,
         ),
     )
 )
@@ -366,8 +361,9 @@ class NetzNoeEnergyCommunitySensor(NetzNoeConsumptionSensor):
 
     @override
     def _period_start(self, data: NetzNoeData) -> date | None:
-        """Return the first day of the period."""
-        return self.entity_description.period_fn(data)
+        """Return the first day of the period the split covers, which can be the period before the consumption's."""
+        split = self.entity_description.split_fn(data)
+        return split.start if split else None
 
 
 class NetzNoeLastUpdatedSensor(NetzNoeSensorBase):

@@ -13,4 +13,9 @@ backfill_statistics:
           min: 2000
           max: 2030
           mode: box
+    energy_community:
+      required: false
+      default: false
+      selector:
+        boolean:
 

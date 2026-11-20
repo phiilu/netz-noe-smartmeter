@@ -29,9 +29,16 @@ from .api import (
     NetzNoeMaintenanceError,
     NetzNoeRateLimitError,
     RawRecord,
+    YearResponse,
+    energy_community_values,
 )
 from .const import CONF_METER_ID, DEFAULT_SCAN_INTERVAL_HOURS, DOMAIN, NetzNoeConfigData
-from .statistics import async_import_raw_statistics
+from .statistics import (
+    EnergyCommunityDay,
+    async_import_energy_community_statistics,
+    async_import_raw_statistics,
+    energy_community_day,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -50,27 +57,43 @@ def _month_value(values: list[float | None], month: int) -> float | None:
     return round(value, 3) if value is not None else None
 
 
+def _week_start(day: date) -> date:
+    """Return the Monday of the day's week."""
+    return day - timedelta(days=day.weekday())
+
+
 @dataclass(frozen=True)
 class EnergyCommunitySplit:
     """Energy community (EEG) split of a period's consumption.
 
-    self_coverage is the part covered by the community, grid_leftover the rest from the supplier.
+    self_coverage is the part covered by the community, grid_leftover the rest
+    from the supplier, start the first day of the period.
     """
 
     self_coverage: float | None
     grid_leftover: float | None
+    start: date
 
 
 def _split(
     response: EnergyCommunityValues,
     reduce: Callable[[list[float | None]], float | None],
+    start: date,
 ) -> EnergyCommunitySplit | None:
     """Return the period's energy community split, or None for a meter outside an EEG."""
-    split = EnergyCommunitySplit(
-        self_coverage=reduce(response.get("selfCoverageValues") or []),
-        grid_leftover=reduce(response.get("gridUsageLeftoverValues") or []),
-    )
-    return None if split == EnergyCommunitySplit(None, None) else split
+    self_coverage, grid_leftover = energy_community_values(response)
+    return _split_of(self_coverage, grid_leftover, reduce, start)
+
+
+def _split_of(
+    self_coverage: list[float | None],
+    grid_leftover: list[float | None],
+    reduce: Callable[[list[float | None]], float | None],
+    start: date,
+) -> EnergyCommunitySplit | None:
+    """Return the split of the given values, or None if neither has one."""
+    split = EnergyCommunitySplit(reduce(self_coverage), reduce(grid_leftover), start)
+    return None if split.self_coverage is None and split.grid_leftover is None else split
 
 
 @dataclass
@@ -116,7 +139,10 @@ class NetzNoeData:
     last_data_timestamp: str | None = None
     # Raw records for statistics import
     raw_records: list[RawRecord] = field(default_factory=list)
-    # Energy community (EEG) split per period, None for meters outside an EEG
+    # Energy community (EEG) split per period, None for meters outside an EEG.
+    # The portal publishes the split later than the consumption, so the splits
+    # can be from the day before daily_date, and then from the week, month or
+    # year before.
     daily_split: EnergyCommunitySplit | None = None
     weekly_split: EnergyCommunitySplit | None = None
     monthly_split: EnergyCommunitySplit | None = None
@@ -136,6 +162,7 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
     session: aiohttp.ClientSession
     meter_id: str
     _first_refresh: bool
+    _energy_community_day: EnergyCommunityDay | None
     backfill_progress: BackfillProgress
 
     def __init__(
@@ -159,6 +186,7 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
         config_data = cast(NetzNoeConfigData, cast(object, config_entry.data))
         self.meter_id = config_data[CONF_METER_ID]
         self._first_refresh = True
+        self._energy_community_day = None
         self.backfill_progress = BackfillProgress()
 
     @override
@@ -183,7 +211,8 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
         hours later. The week, month and year sensors are anchored on the day
         the day fetch found, so they keep showing the completed period until
         the first day of the new one is published. A failed day fetch falls
-        back to yesterday.
+        back to yesterday. The energy community sensors do the same with the
+        newest day that has a split, which can be the day before.
 
         Each helper writes to its own fields on the shared NetzNoeData object.
         _POLL_FATAL_ERRORS propagate immediately.
@@ -194,23 +223,33 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
         """
         data = NetzNoeData()
         today = dt_util.now().date()
+        full_refresh = not self._first_refresh
+        self._first_refresh = False
 
         await self._fetch_day(data, today)
         newest = data.daily_date or today - timedelta(days=1)
 
+        years: dict[int, YearResponse] = {}
         tasks = [
             self._fetch_week(data, newest),
-            self._fetch_current_year(data, newest),
-            self._fetch_prev_year(data, newest),
+            self._fetch_current_year(data, newest, years),
+            self._fetch_prev_year(data, newest, years),
         ]
 
-        if self._first_refresh:
-            self._first_refresh = False
-            _LOGGER.debug("First refresh — skipping raw data fetch, will schedule full refresh")
-        else:
+        if full_refresh:
             tasks.append(self._fetch_raw(data, today))
+        else:
+            _LOGGER.debug("First refresh — skipping raw data fetch, will schedule full refresh")
 
         _ = await asyncio.gather(*tasks)
+
+        if not full_refresh:
+            return data
+
+        if data.daily_split is None and data.daily_date is not None and self._in_energy_community(data):
+            await self._fetch_previous_day_split(data, data.daily_date - timedelta(days=1))
+            if data.daily_split is not None:
+                await self._use_split_periods_of(data, data.daily_split.start, newest, years)
 
         # Import raw 15-min data as hourly statistics for Energy Dashboard
         if data.raw_records:
@@ -219,7 +258,46 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
             except Exception:
                 _LOGGER.exception("Failed to import statistics")
 
+        if data.daily_split is not None and self._energy_community_day is not None:
+            try:
+                await async_import_energy_community_statistics(
+                    self.hass, self.meter_id, self._energy_community_day, self._fetch_energy_community_day
+                )
+            except _POLL_FATAL_ERRORS:
+                raise
+            except Exception:
+                _LOGGER.exception("Failed to import energy community statistics")
+
         return data
+
+    def _in_energy_community(self, data: NetzNoeData) -> bool:
+        """Return whether the meter is in an energy community.
+
+        The week or month has a split, or the previous poll's day had one: on a
+        Monday that is also the 1st, the week and month have no split yet either.
+        """
+        previous = cast(NetzNoeData | None, self.data)
+        return (
+            data.weekly_split is not None
+            or data.monthly_split is not None
+            or (previous is not None and previous.daily_split is not None)
+        )
+
+    def _use_daily_split(self, data: NetzNoeData, ec_day: EnergyCommunityDay) -> None:
+        """Report a day's energy community split as the daily split, and keep the day for the next poll."""
+        data.daily_split = _split_of(ec_day.self_coverage, ec_day.grid_leftover, _total, ec_day.day)
+        self._energy_community_day = ec_day
+
+    async def _fetch_energy_community_day(self, day: date) -> EnergyCommunityDay | None:
+        """Fetch a day's energy community split, None if the portal has none for it or the request failed."""
+        try:
+            response = await self.api.get_day(self.meter_id, day, record_shape=False)
+        except _POLL_FATAL_ERRORS:
+            raise
+        except NetzNoeApiError as err:
+            _LOGGER.warning("Failed to fetch energy community data for %s: %s", day, err)
+            return None
+        return energy_community_day(day, response)
 
     async def _fetch_day(self, data: NetzNoeData, today: date) -> None:
         """Fetch the newest day (yesterday, or 2 days ago while yesterday is not published yet).
@@ -240,7 +318,8 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
                     data.daily_timestamps = timestamps
                     data.daily_total = _total(non_null)
                     data.daily_date = fetch_date
-                    data.daily_split = _split(day_data, _total)
+                    if (ec_day := energy_community_day(fetch_date, day_data)) is not None:
+                        self._use_daily_split(data, ec_day)
 
                     non_null_ts = [t for t in timestamps if t is not None]
                     if non_null_ts:
@@ -254,16 +333,55 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
                 _LOGGER.warning("Failed to fetch day data for %s: %s", fetch_date, err)
                 return
 
+    async def _fetch_previous_day_split(self, data: NetzNoeData, day: date) -> None:
+        """Use the energy community split of the day before the newest one, fetched only if no poll had it yet."""
+        ec_day = self._energy_community_day
+        if ec_day is None or ec_day.day != day:
+            ec_day = await self._fetch_energy_community_day(day)
+        if ec_day is None:
+            _LOGGER.debug("No energy community data for %s either", day)
+            return
+        self._use_daily_split(data, ec_day)
+        _LOGGER.debug("Energy community data from %s, the newest day has none yet", day)
+
+    async def _use_split_periods_of(
+        self, data: NetzNoeData, day: date, newest: date, years: dict[int, YearResponse]
+    ) -> None:
+        """Report the splits of the day's week, month and year where the newest day starts a new one.
+
+        The newest day has no split yet, so the new period has none either. Like
+        the consumption sensors, the energy community sensors keep showing the
+        completed period, which now includes its last day, until it has one.
+        """
+        if (year := years.get(day.year)) is not None:
+            if (day.year, day.month) != (newest.year, newest.month):
+                data.monthly_split = _split(year, partial(_month_value, month=day.month), day.replace(day=1))
+            if day.year != newest.year:
+                data.yearly_split = _split(year, _total, day.replace(month=1, day=1))
+
+        if (week_start := _week_start(day)) == _week_start(newest):
+            return
+        try:
+            week = await self.api.get_week(
+                self.meter_id, week_start, week_start + timedelta(days=7), record_shape=False
+            )
+        except _POLL_FATAL_ERRORS:
+            raise
+        except NetzNoeApiError as err:
+            _LOGGER.warning("Failed to fetch energy community data for the week of %s: %s", week_start, err)
+            return
+        data.weekly_split = _split(week, _total, week_start)
+
     async def _fetch_week(self, data: NetzNoeData, newest: date) -> None:
         """Fetch the week (Mon-Sun) containing the newest day."""
-        week_start = newest - timedelta(days=newest.isoweekday() - 1)
+        week_start = _week_start(newest)
         next_week_start = week_start + timedelta(days=7)
         try:
             week_data = await self.api.get_week(self.meter_id, week_start, next_week_start)
             weekly_values = week_data.get("meteredValues") or []
             data.weekly_daily_values = weekly_values
             data.weekly_total = _total(weekly_values)
-            data.weekly_split = _split(week_data, _total)
+            data.weekly_split = _split(week_data, _total, week_start)
             data.week_start = week_start
             _LOGGER.debug("Week data from %s: %s kWh", week_start, data.weekly_total)
         except _POLL_FATAL_ERRORS:
@@ -271,30 +389,32 @@ class NetzNoeCoordinator(DataUpdateCoordinator[NetzNoeData]):
         except NetzNoeApiError as err:
             _LOGGER.warning("Failed to fetch week data: %s", err)
 
-    async def _fetch_current_year(self, data: NetzNoeData, newest: date) -> None:
-        """Fetch the year containing the newest day for monthly/yearly totals."""
+    async def _fetch_current_year(self, data: NetzNoeData, newest: date, years: dict[int, YearResponse]) -> None:
+        """Fetch the year containing the newest day for monthly/yearly totals, keeping the response in years."""
         try:
             year_data = await self.api.get_year(self.meter_id, newest.year)
+            years[newest.year] = year_data
             monthly = year_data.get("values") or []
             data.monthly_values = monthly
 
             data.monthly_total = _month_value(monthly, newest.month)
             if data.monthly_total is not None:
                 data.month_start = newest.replace(day=1)
-                data.monthly_split = _split(year_data, partial(_month_value, month=newest.month))
+                data.monthly_split = _split(year_data, partial(_month_value, month=newest.month), data.month_start)
             data.yearly_total = _total(monthly)
             data.year_start = newest.replace(month=1, day=1)
-            data.yearly_split = _split(year_data, _total)
+            data.yearly_split = _split(year_data, _total, data.year_start)
         except _POLL_FATAL_ERRORS:
             raise
         except NetzNoeApiError as err:
             _LOGGER.warning("Failed to fetch year data: %s", err)
 
-    async def _fetch_prev_year(self, data: NetzNoeData, newest: date) -> None:
-        """Fetch the year before the newest day for invoice comparison."""
+    async def _fetch_prev_year(self, data: NetzNoeData, newest: date, years: dict[int, YearResponse]) -> None:
+        """Fetch the year before the newest day for invoice comparison, keeping the response in years."""
         prev_year = newest.year - 1
         try:
             prev_data = await self.api.get_year(self.meter_id, prev_year, record_shape=False)
+            years[prev_year] = prev_data
             prev_monthly = prev_data.get("values") or []
             data.prev_year = prev_year
             data.prev_year_monthly_values = prev_monthly

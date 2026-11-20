@@ -33,7 +33,9 @@ from .coordinator import NetzNoeCoordinator
 from .sensor import SIGNAL_BACKFILL_PROGRESS
 from .statistics import (
     BackfillResult,
-    async_apply_statistic_name,
+    EnergyCommunityBackfillResult,
+    async_apply_statistic_names,
+    async_backfill_energy_community_statistics,
     async_backfill_statistics,
     async_statistic_has_data,
     statistic_id_for,
@@ -45,6 +47,7 @@ PLATFORMS = [Platform.BUTTON, Platform.SENSOR]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
 
 ATTR_CONFIG_ENTRY_ID = "config_entry_id"
+ATTR_ENERGY_COMMUNITY = "energy_community"
 SERVICE_BACKFILL = "backfill_statistics"
 
 # 5-minute timeout for API requests (the Netz NÖ API can be slow)
@@ -68,6 +71,7 @@ async def async_setup(hass: HomeAssistant, _config: ConfigType) -> bool:
         else:
             raise ServiceValidationError("start_year must be an integer")
 
+        energy_community = call_data.get(ATTR_ENERGY_COMMUNITY) is True
         coord: NetzNoeCoordinator = _get_loaded_entry(hass, call_data).runtime_data
 
         def on_progress(state: str, chunk: int, total: int, records: int, date_range: str) -> None:
@@ -87,8 +91,10 @@ async def async_setup(hass: HomeAssistant, _config: ConfigType) -> bool:
         coord.backfill_progress.result_summary = None
         async_dispatcher_send(hass, SIGNAL_BACKFILL_PROGRESS)
 
+        result: BackfillResult | EnergyCommunityBackfillResult
         try:
-            result = await async_backfill_statistics(
+            backfill = async_backfill_energy_community_statistics if energy_community else async_backfill_statistics
+            result = await backfill(
                 hass,
                 coord.api,
                 coord.meter_id,
@@ -109,10 +115,14 @@ async def async_setup(hass: HomeAssistant, _config: ConfigType) -> bool:
             async_dispatcher_send(hass, SIGNAL_BACKFILL_PROGRESS)
             raise HomeAssistantError(result["error"])
 
-        total_kwh = result.get("total_kwh", 0)
         total_entries = result.get("total_entries", 0)
         coord.backfill_progress.state = "completed"
-        coord.backfill_progress.result_summary = f"{total_entries} entries, {total_kwh} kWh"
+        if "self_coverage_kwh" in result:
+            coord.backfill_progress.result_summary = (
+                f"{total_entries} entries, {result['self_coverage_kwh']} kWh energy community share"
+            )
+        else:
+            coord.backfill_progress.result_summary = f"{total_entries} entries, {result.get('total_kwh', 0)} kWh"
         async_dispatcher_send(hass, SIGNAL_BACKFILL_PROGRESS)
 
         return cast(ServiceResponse, cast(object, result))
@@ -125,6 +135,7 @@ async def async_setup(hass: HomeAssistant, _config: ConfigType) -> bool:
             {
                 vol.Optional(ATTR_CONFIG_ENTRY_ID): cv.string,
                 vol.Optional("start_year"): vol.Coerce(int),
+                vol.Optional(ATTR_ENERGY_COMMUNITY, default=False): cv.boolean,
             }
         ),
         supports_response=SupportsResponse.OPTIONAL,
@@ -203,7 +214,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NetzNoeConfigEntry) -> b
     # Store coordinator as runtime_data
     entry.runtime_data = coordinator
 
-    async_apply_statistic_name(hass, coordinator.meter_id)
+    await async_apply_statistic_names(hass, coordinator.meter_id)
     entry.async_on_unload(entry.add_update_listener(_async_entry_updated))
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -215,8 +226,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: NetzNoeConfigEntry) -> b
 
 
 async def _async_entry_updated(hass: HomeAssistant, entry: NetzNoeConfigEntry) -> None:
-    """Apply a new entry title to the statistic."""
-    async_apply_statistic_name(hass, entry.runtime_data.meter_id)
+    """Apply a new entry title to the statistics."""
+    await async_apply_statistic_names(hass, entry.runtime_data.meter_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: NetzNoeConfigEntry) -> bool:

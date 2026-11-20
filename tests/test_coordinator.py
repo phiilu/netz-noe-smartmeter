@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from datetime import date, timedelta
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -22,11 +24,14 @@ from custom_components.netz_noe_smartmeter.api import (
 )
 from custom_components.netz_noe_smartmeter.const import DOMAIN
 from custom_components.netz_noe_smartmeter.coordinator import EnergyCommunitySplit, NetzNoeCoordinator, NetzNoeData
+from custom_components.netz_noe_smartmeter.statistics import EnergyCommunityDay
 
 from .conftest import (
     MOCK_CONFIG_DATA,
     MOCK_DAY_RESPONSE,
+    MOCK_EEG_DAY_RESPONSE,
     MOCK_EEG_RESPONSES,
+    MOCK_EEG_WEEK_RESPONSE,
     MOCK_METER_ID,
     MOCK_RAW_RESPONSE,
     MOCK_WEEK_RESPONSE,
@@ -99,8 +104,9 @@ async def test_update_data_success(hass: HomeAssistant) -> None:
 
 
 async def test_update_data_without_energy_community(hass: HomeAssistant) -> None:
-    """Test a meter outside an energy community has no split for any period."""
-    coord = _make_coordinator(hass, _mock_api())
+    """Test a meter outside an energy community has no split for any period and costs no extra request."""
+    api = _mock_api()
+    coord = _make_coordinator(hass, api)
 
     with patch(
         "custom_components.netz_noe_smartmeter.coordinator.async_import_raw_statistics",
@@ -109,6 +115,8 @@ async def test_update_data_without_energy_community(hass: HomeAssistant) -> None
         data = await coord._async_update_data()
 
     assert not data.has_energy_community
+    # No request for the day before: the meter has no split to fall back to
+    api.get_day.assert_awaited_once()
 
 
 async def test_update_data_null_fields(hass: HomeAssistant) -> None:
@@ -151,7 +159,7 @@ async def test_update_data_monthly_split_needs_month_total(hass: HomeAssistant, 
 
     assert data.month_start is None
     assert data.monthly_split is None
-    assert data.yearly_split == EnergyCommunitySplit(self_coverage=82.585, grid_leftover=1123.809)
+    assert data.yearly_split == EnergyCommunitySplit(82.585, 1123.809, date(2026, 1, 1))
 
 
 async def test_update_data_energy_community_split(hass: HomeAssistant, freezer: FrozenDateTimeFactory) -> None:
@@ -168,10 +176,261 @@ async def test_update_data_energy_community_split(hass: HomeAssistant, freezer: 
 
     assert data.has_energy_community
     assert data.daily_total == pytest.approx(33.451)
-    assert data.daily_split == EnergyCommunitySplit(self_coverage=9.673, grid_leftover=23.778)
-    assert data.weekly_split == EnergyCommunitySplit(self_coverage=16.454, grid_leftover=200.374)
-    assert data.monthly_split == EnergyCommunitySplit(self_coverage=32.585, grid_leftover=473.809)
-    assert data.yearly_split == EnergyCommunitySplit(self_coverage=82.585, grid_leftover=1123.809)
+    assert data.daily_split == EnergyCommunitySplit(9.673, 23.778, date(2026, 11, 14))
+    assert data.weekly_split == EnergyCommunitySplit(16.454, 200.374, date(2026, 11, 9))
+    assert data.monthly_split == EnergyCommunitySplit(32.585, 473.809, date(2026, 11, 1))
+    assert data.yearly_split == EnergyCommunitySplit(82.585, 1123.809, date(2026, 1, 1))
+
+
+def _eeg_api(day_responses: dict[date, object]) -> MagicMock:
+    """Return an API answering like the portal for an energy community member, with the given Day responses."""
+
+    async def _get_day(_meter_id: str, day: date, *, record_shape: bool = True) -> object:
+        response = day_responses[day]
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    api = _mock_api(**{method: AsyncMock(return_value=response) for method, response in MOCK_EEG_RESPONSES.items()})
+    api.get_day = AsyncMock(side_effect=_get_day)
+    return api
+
+
+_DAY_WITHOUT_SPLIT = {**MOCK_EEG_DAY_RESPONSE, "selfCoverageValues": [None] * 4, "gridUsageLeftoverValues": [None] * 4}
+_EC_DAY_13 = EnergyCommunityDay(date(2026, 11, 13), [0.0, 9.673, 0.0, None], [10.0, 3.778, 10.0, None])
+_SPLIT_13 = EnergyCommunitySplit(9.673, 23.778, date(2026, 11, 13))
+_NO_SPLIT = {"selfCoverageValues": [None] * 12, "gridUsageLeftoverValues": [None] * 12}
+
+
+@pytest.fixture
+def mock_ec_import() -> Generator[AsyncMock]:
+    """Patch both statistics imports in a Sunday poll (15 Nov 2026) and yield the energy community import."""
+    with (
+        patch("custom_components.netz_noe_smartmeter.coordinator.async_import_raw_statistics", new_callable=AsyncMock),
+        patch(
+            "custom_components.netz_noe_smartmeter.coordinator.async_import_energy_community_statistics",
+            new_callable=AsyncMock,
+        ) as mock_import,
+    ):
+        yield mock_import
+
+
+@pytest.fixture
+def sunday(freezer: FrozenDateTimeFactory) -> None:
+    """Freeze time on Sunday 15 Nov 2026, so the newest day is Saturday 14 Nov."""
+    freezer.move_to("2026-11-15 12:00:00-08:00")
+
+
+@pytest.mark.usefixtures("sunday")
+async def test_update_data_daily_split_falls_back_to_day_before(hass: HomeAssistant, mock_ec_import: AsyncMock) -> None:
+    """Test the daily split comes from the day before while the portal has none for the newest day yet."""
+    api = _eeg_api({date(2026, 11, 14): _DAY_WITHOUT_SPLIT, date(2026, 11, 13): MOCK_EEG_DAY_RESPONSE})
+    coord = _make_coordinator(hass, api)
+
+    data = await coord._async_update_data()
+
+    assert data.daily_date == date(2026, 11, 14)
+    assert data.daily_total == pytest.approx(33.451)
+    assert data.daily_split == _SPLIT_13
+    # Shapes stay those of the newest day, which show the missing split
+    api.get_day.assert_awaited_with(MOCK_METER_ID, date(2026, 11, 13), record_shape=False)
+    mock_ec_import.assert_awaited_once_with(hass, MOCK_METER_ID, _EC_DAY_13, coord._fetch_energy_community_day)
+
+
+@pytest.mark.usefixtures("sunday")
+async def test_update_data_daily_split_fallback_reuses_previous_poll(
+    hass: HomeAssistant, mock_ec_import: AsyncMock
+) -> None:
+    """Test later polls reuse the day before instead of fetching it again while the newest day has no split."""
+    api = _eeg_api({date(2026, 11, 14): _DAY_WITHOUT_SPLIT, date(2026, 11, 13): MOCK_EEG_DAY_RESPONSE})
+    coord = _make_coordinator(hass, api)
+
+    coord.data = await coord._async_update_data()
+    api.get_day.reset_mock()
+    data = await coord._async_update_data()
+
+    assert data.daily_split == _SPLIT_13
+    api.get_day.assert_awaited_once_with(MOCK_METER_ID, date(2026, 11, 14))
+
+
+async def test_update_data_daily_split_fallback_from_previous_poll(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, mock_ec_import: AsyncMock
+) -> None:
+    """Test a newest day that starts a week and a month falls back too, as the previous poll had a daily split."""
+    freezer.move_to("2026-06-02 12:00:00-07:00")  # the newest day is Monday 1 June
+    api = _eeg_api({date(2026, 6, 1): _DAY_WITHOUT_SPLIT, date(2026, 5, 31): MOCK_EEG_DAY_RESPONSE})
+    api.get_week = AsyncMock(return_value=MOCK_WEEK_RESPONSE)
+    api.get_year = AsyncMock(return_value=MOCK_YEAR_RESPONSE)
+    coord = _make_coordinator(hass, api)
+
+    assert (await coord._async_update_data()).daily_split is None
+    coord.data = NetzNoeData(daily_split=_SPLIT_13)
+    data = await coord._async_update_data()
+
+    assert data.daily_split == EnergyCommunitySplit(9.673, 23.778, date(2026, 5, 31))
+
+
+@pytest.mark.parametrize(
+    ("previous_week", "weekly_split"),
+    [
+        (MOCK_EEG_WEEK_RESPONSE, EnergyCommunitySplit(16.454, 200.374, date(2026, 11, 9))),
+        (NetzNoeApiError("API error 500"), None),
+        (NetzNoeRateLimitError("API rate limit exceeded"), UpdateFailed),
+    ],
+    ids=["previous_week", "request_failed", "poll_fatal_error"],
+)
+async def test_update_data_split_keeps_completed_week(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    mock_ec_import: AsyncMock,
+    previous_week: object,
+    weekly_split: EnergyCommunitySplit | type[Exception] | None,
+) -> None:
+    """Test the weekly split stays on the completed week, Sunday included, while Monday has no split yet."""
+    freezer.move_to("2026-11-17 12:00:00-08:00")  # the newest day is Monday 16 Nov
+    api = _eeg_api({date(2026, 11, 16): _DAY_WITHOUT_SPLIT, date(2026, 11, 15): MOCK_EEG_DAY_RESPONSE})
+
+    async def _get_week(_meter_id: str, start: date, _end: date, *, record_shape: bool = True) -> object:
+        if start == date(2026, 11, 16):
+            return {**MOCK_EEG_WEEK_RESPONSE, **_NO_SPLIT}
+        if isinstance(previous_week, Exception):
+            raise previous_week
+        return previous_week
+
+    api.get_week = AsyncMock(side_effect=_get_week)
+    coord = _make_coordinator(hass, api)
+
+    if isinstance(weekly_split, type):
+        with pytest.raises(weekly_split):
+            await coord._async_update_data()
+        return
+    data = await coord._async_update_data()
+
+    assert data.week_start == date(2026, 11, 16)
+    assert data.daily_split == EnergyCommunitySplit(9.673, 23.778, date(2026, 11, 15))
+    assert data.weekly_split == weekly_split
+    assert data.monthly_split == EnergyCommunitySplit(32.585, 473.809, date(2026, 11, 1))
+    api.get_week.assert_awaited_with(MOCK_METER_ID, date(2026, 11, 9), date(2026, 11, 16), record_shape=False)
+
+
+async def test_update_data_split_keeps_completed_month_and_year(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, mock_ec_import: AsyncMock
+) -> None:
+    """Test the monthly and yearly splits stay on December while 1 January has no split yet."""
+    freezer.move_to("2027-01-02 12:00:00-08:00")  # the newest day is Friday 1 Jan, in the week of 31 Dec
+    api = _eeg_api({date(2027, 1, 1): _DAY_WITHOUT_SPLIT, date(2026, 12, 31): MOCK_EEG_DAY_RESPONSE})
+    years = {
+        2027: {"values": [33.451] + [None] * 11, **_NO_SPLIT},
+        2026: {
+            "values": [100.0] * 12,
+            "selfCoverageValues": [None] * 11 + [50.0],
+            "gridUsageLeftoverValues": [None] * 11 + [650.0],
+        },
+    }
+
+    async def _get_year(_meter_id: str, year: int, *, record_shape: bool = True) -> object:
+        return years[year]
+
+    api.get_year = AsyncMock(side_effect=_get_year)
+    coord = _make_coordinator(hass, api)
+
+    data = await coord._async_update_data()
+
+    assert (data.month_start, data.year_start) == (date(2027, 1, 1), date(2027, 1, 1))
+    assert data.monthly_split == EnergyCommunitySplit(50.0, 650.0, date(2026, 12, 1))
+    assert data.yearly_split == EnergyCommunitySplit(50.0, 650.0, date(2026, 1, 1))
+    # The day before is in the same week, so no request for another week
+    api.get_week.assert_awaited_once()
+
+
+@pytest.mark.usefixtures("sunday")
+async def test_update_data_daily_split_unknown_without_split_for_day_before(
+    hass: HomeAssistant, mock_ec_import: AsyncMock
+) -> None:
+    """Test the daily split stays unknown if the day before has no split either."""
+    api = _eeg_api({date(2026, 11, 14): _DAY_WITHOUT_SPLIT, date(2026, 11, 13): _DAY_WITHOUT_SPLIT})
+    coord = _make_coordinator(hass, api)
+
+    data = await coord._async_update_data()
+
+    assert data.daily_split is None
+    assert data.weekly_split is not None
+    mock_ec_import.assert_not_awaited()
+
+
+@pytest.mark.usefixtures("sunday")
+async def test_update_data_daily_split_fallback_error_keeps_poll(
+    hass: HomeAssistant, mock_ec_import: AsyncMock, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Test a failed request for the day before only leaves the daily split unknown."""
+    api = _eeg_api({date(2026, 11, 14): _DAY_WITHOUT_SPLIT, date(2026, 11, 13): NetzNoeApiError("API error 500")})
+    coord = _make_coordinator(hass, api)
+
+    data = await coord._async_update_data()
+
+    assert data.daily_total == pytest.approx(33.451)
+    assert data.daily_split is None
+    assert "Failed to fetch energy community data for 2026-11-13" in caplog.text
+
+
+@pytest.mark.usefixtures("sunday")
+async def test_update_data_energy_community_fetch_auth_error(hass: HomeAssistant, mock_ec_import: AsyncMock) -> None:
+    """Test rejected credentials in an energy community request start the reauth, like any other request."""
+    api = _eeg_api({date(2026, 11, 14): _DAY_WITHOUT_SPLIT, date(2026, 11, 13): NetzNoeAuthError("Invalid")})
+    coord = _make_coordinator(hass, api)
+
+    with pytest.raises(ConfigEntryAuthFailed):
+        await coord._async_update_data()
+
+
+@pytest.mark.usefixtures("sunday")
+@pytest.mark.parametrize(
+    ("side_effect", "raises"),
+    [(RuntimeError("db error"), None), (NetzNoeAuthError("Invalid"), ConfigEntryAuthFailed)],
+    ids=["import_error_logged", "fetch_auth_error_raised"],
+)
+async def test_update_data_energy_community_import(
+    hass: HomeAssistant, mock_ec_import: AsyncMock, side_effect: Exception, raises: type[Exception] | None
+) -> None:
+    """Test the newest day's split is imported on a full refresh: import errors are logged, poll-fatal ones raised."""
+    api = _eeg_api({date(2026, 11, 14): MOCK_EEG_DAY_RESPONSE})
+    coord = _make_coordinator(hass, api)
+    mock_ec_import.side_effect = side_effect
+
+    if raises is None:
+        data = await coord._async_update_data()
+        assert data.daily_split == EnergyCommunitySplit(9.673, 23.778, date(2026, 11, 14))
+    else:
+        with pytest.raises(raises):
+            await coord._async_update_data()
+
+    newest = cast(EnergyCommunityDay, mock_ec_import.await_args_list[0].args[2])
+    assert newest.day == date(2026, 11, 14)
+    api.get_day.assert_awaited_once()
+
+
+@pytest.mark.usefixtures("sunday")
+async def test_first_refresh_skips_energy_community_requests(hass: HomeAssistant, mock_ec_import: AsyncMock) -> None:
+    """Test setup makes no request for the day before and imports nothing; the full refresh after it does."""
+    api = _eeg_api({date(2026, 11, 14): _DAY_WITHOUT_SPLIT, date(2026, 11, 13): MOCK_EEG_DAY_RESPONSE})
+    coord = _make_coordinator(hass, api)
+    coord._first_refresh = True
+
+    data = await coord._async_update_data()
+
+    assert data.daily_split is None
+    api.get_day.assert_awaited_once()
+    mock_ec_import.assert_not_awaited()
+
+
+async def test_fetch_energy_community_day(hass: HomeAssistant) -> None:
+    """Test the import's fetch function returns the day's split, None without one, and asks for no response shape."""
+    api = _eeg_api({date(2026, 11, 13): MOCK_EEG_DAY_RESPONSE, date(2026, 11, 14): _DAY_WITHOUT_SPLIT})
+    coord = _make_coordinator(hass, api)
+
+    assert await coord._fetch_energy_community_day(date(2026, 11, 13)) == _EC_DAY_13
+    assert await coord._fetch_energy_community_day(date(2026, 11, 14)) is None
+    api.get_day.assert_awaited_with(MOCK_METER_ID, date(2026, 11, 14), record_shape=False)
 
 
 # -- _async_update_data: rejected credentials --
@@ -258,7 +517,7 @@ async def test_fetch_helpers_record_period_starts(hass: HomeAssistant) -> None:
     await coord._fetch_day(data, today)
     await coord._fetch_week(data, newest)
     api.get_week.assert_called_once_with(MOCK_METER_ID, date(2025, 2, 3), date(2025, 2, 10))
-    await coord._fetch_current_year(data, newest)
+    await coord._fetch_current_year(data, newest, {})
 
     assert data.daily_date == date(2025, 2, 9)
     assert data.week_start == date(2025, 2, 3)

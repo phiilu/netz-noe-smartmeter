@@ -34,6 +34,7 @@ PATCH_API_CLS = "custom_components.netz_noe_smartmeter.NetzNoeApi"
 PATCH_SESSION_CLS = "custom_components.netz_noe_smartmeter.aiohttp.ClientSession"
 PATCH_COOKIE_JAR = "custom_components.netz_noe_smartmeter.aiohttp.CookieJar"
 PATCH_BACKFILL = "custom_components.netz_noe_smartmeter.async_backfill_statistics"
+PATCH_EC_BACKFILL = "custom_components.netz_noe_smartmeter.async_backfill_energy_community_statistics"
 
 
 def _mock_entry(meter_id: str = MOCK_METER_ID) -> MockConfigEntry:
@@ -354,7 +355,10 @@ async def test_backfill_service_success(
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
 
-    with patch(PATCH_BACKFILL, new_callable=AsyncMock) as mock_backfill:
+    with (
+        patch(PATCH_BACKFILL, new_callable=AsyncMock) as mock_backfill,
+        patch(PATCH_EC_BACKFILL, new_callable=AsyncMock) as mock_ec_backfill,
+    ):
         mock_backfill.return_value = {"imported_count": 42}
 
         result = await hass.services.async_call(
@@ -367,9 +371,64 @@ async def test_backfill_service_success(
 
     assert result == {"imported_count": 42}
     mock_backfill.assert_awaited_once()
+    mock_ec_backfill.assert_not_awaited()
     # Verify start_year was passed through
     call_kwargs = mock_backfill.call_args
     assert call_kwargs[1]["start_year"] == 2023
+
+
+async def test_backfill_service_energy_community(
+    hass: HomeAssistant,
+    _patch_aiohttp: AsyncMock,
+    _patch_api: AsyncMock,
+) -> None:
+    """Test energy_community backfills the energy community statistics instead of the consumption."""
+    entry = _mock_entry()
+    entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    ec_result = {"total_entries": 48, "days_fetched": 2, "self_coverage_kwh": 1.5, "grid_leftover_kwh": 3.0}
+
+    with (
+        patch(PATCH_BACKFILL, new_callable=AsyncMock) as mock_backfill,
+        patch(PATCH_EC_BACKFILL, new_callable=AsyncMock, return_value=ec_result) as mock_ec_backfill,
+    ):
+        result = await hass.services.async_call(
+            DOMAIN,
+            "backfill_statistics",
+            {"start_year": 2025, "energy_community": True},
+            blocking=True,
+            return_response=True,
+        )
+
+    assert result == ec_result
+    mock_backfill.assert_not_awaited()
+    assert mock_ec_backfill.call_args.kwargs["start_year"] == 2025
+    coordinator = entry.runtime_data
+    assert coordinator.backfill_progress.state == "completed"
+    assert coordinator.backfill_progress.result_summary == "48 entries, 1.5 kWh energy community share"
+
+
+async def test_backfill_service_energy_community_error(
+    hass: HomeAssistant,
+    _patch_aiohttp: AsyncMock,
+    _patch_api: AsyncMock,
+) -> None:
+    """Test an energy community backfill error fails the service."""
+    entry = _mock_entry()
+    entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    with (
+        patch(PATCH_EC_BACKFILL, new_callable=AsyncMock, return_value={"error": "No energy community data found"}),
+        pytest.raises(HomeAssistantError, match="No energy community data found"),
+    ):
+        await hass.services.async_call(
+            DOMAIN, "backfill_statistics", {"energy_community": True}, blocking=True, return_response=True
+        )
+
+    assert entry.runtime_data.backfill_progress.state == "failed"
 
 
 async def test_backfill_service_progress_callback_updates_coordinator_status(
