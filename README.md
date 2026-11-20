@@ -19,7 +19,7 @@ Reads your electricity consumption from the Netz NÖ smart meter portal and make
 
 - Daily, weekly, monthly, and yearly consumption sensors (kWh)
 - Yearly sensor includes monthly breakdown and previous year comparison
-- Energy community (EEG) share of the consumption for meters in an energy community
+- Energy community (EEG) share of the consumption for meters in an energy community, as sensors and as hourly statistics for the Energy Dashboard
 - Backfill status diagnostic sensor with live progress details
 - Manual refresh button to trigger an on-demand update
 - Automatic import of 15-minute interval data as hourly statistics for the Energy Dashboard
@@ -79,7 +79,20 @@ If your meter is part of an energy community (Erneuerbare-Energie-Gemeinschaft),
 
 Both add up to the consumption sensor of the same period. If the meter is in more than one energy community, the share is the total over all of them.
 
-These sensors don't belong in the Energy Dashboard. The share is already part of the meter's consumption statistic, so adding it as a second grid connection counts it twice, and the sensors only change once a day.
+Netz NÖ publishes the community share later than the consumption. Until it has published the share of the newest day, the daily sensors show the day before, and the weekly, monthly and yearly sensors stay on the completed period when the newest day starts a new one.
+
+These sensors don't belong in the Energy Dashboard. They only change once a day, and the share is already part of the meter's consumption statistic. For the Energy Dashboard, use the hourly statistics below.
+
+#### Energy Dashboard
+
+For a meter in an energy community, the integration also imports the split as two hourly statistics, named after the integration entry:
+
+- `<entry title> Eigendeckung`, the energy community share
+- `<entry title> Restnetzbezug`, the remaining grid consumption
+
+Under **Settings > Dashboards > Energy**, add both as grid consumption instead of the meter's statistic, not in addition to it, because together they are the meter's consumption. The dashboard then stacks them per hour, like the portal does.
+
+The import starts with the newest day that has a split and catches up to five days it missed, for example while Home Assistant was off. To import the history, run the backfill action below with `energy_community: true`.
 
 ## Button
 
@@ -103,9 +116,12 @@ To import historical data, call the `netz_noe_smartmeter.backfill_statistics` se
 service: netz_noe_smartmeter.backfill_statistics
 data:
   start_year: 2023  # optional, auto-detects if omitted
+  energy_community: true  # optional, backfills the energy community statistics instead
 ```
 
 This fetches all available raw data in 30-day chunks. It may take a while depending on how many years of data are available.
+
+With `energy_community: true` it backfills the two energy community statistics instead and leaves the consumption statistic as it is. `start_year` then only limits how far back it looks. The portal only has the 15-minute split per day, so this takes one request per day in the energy community, about 20 minutes per year.
 
 ## Disclaimer
 

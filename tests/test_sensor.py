@@ -111,32 +111,34 @@ class TestEnergyCommunitySensors:
         }
 
     def test_values_and_period_starts(self) -> None:
-        """Test each sensor reports its period's split with last_reset at the period start."""
-        periods = {
-            "daily": (date(2026, 11, 14), EnergyCommunitySplit(9.673, 23.778)),
-            "weekly": (date(2026, 11, 9), EnergyCommunitySplit(16.454, 200.374)),
-            "monthly": (date(2026, 11, 1), EnergyCommunitySplit(32.585, 473.809)),
-            "yearly": (date(2026, 1, 1), EnergyCommunitySplit(82.585, 1123.809)),
+        """Test each sensor reports its period's split with last_reset at the start of the split's period.
+
+        The splits are from Sunday while the consumption is on Monday, as while the portal has not
+        published the split of the newest day yet, so the weekly one is from the week before.
+        """
+        splits = {
+            "daily": EnergyCommunitySplit(9.673, 23.778, date(2026, 11, 15)),
+            "weekly": EnergyCommunitySplit(16.454, 200.374, date(2026, 11, 9)),
+            "monthly": EnergyCommunitySplit(32.585, 473.809, date(2026, 11, 1)),
+            "yearly": EnergyCommunitySplit(82.585, 1123.809, date(2026, 1, 1)),
         }
         data = NetzNoeData(
-            daily_date=periods["daily"][0],
-            week_start=periods["weekly"][0],
-            month_start=periods["monthly"][0],
-            year_start=periods["yearly"][0],
-            daily_split=periods["daily"][1],
-            weekly_split=periods["weekly"][1],
-            monthly_split=periods["monthly"][1],
-            yearly_split=periods["yearly"][1],
+            daily_date=date(2026, 11, 16),
+            week_start=date(2026, 11, 16),
+            daily_split=splits["daily"],
+            weekly_split=splits["weekly"],
+            monthly_split=splits["monthly"],
+            yearly_split=splits["yearly"],
         )
         sensors = self._sensors(data)
 
         assert len(sensors) == 8
-        for period, (start, split) in periods.items():
+        for period, split in splits.items():
             assert sensors[f"{period}_self_coverage"].native_value == split.self_coverage
             assert sensors[f"{period}_grid_leftover"].native_value == split.grid_leftover
             for kind in ("self_coverage", "grid_leftover"):
                 sensor = sensors[f"{period}_{kind}"]
-                assert sensor.last_reset == dt_util.start_of_local_day(start)
+                assert sensor.last_reset == dt_util.start_of_local_day(split.start)
                 assert sensor.state_class is SensorStateClass.TOTAL
 
     def test_unknown_without_split(self) -> None:

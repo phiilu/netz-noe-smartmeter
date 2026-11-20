@@ -103,6 +103,10 @@
         "start_year": {
           "name": "Startjahr",
           "description": "Jahr, ab dem nachgeladen werden soll, zum Beispiel 2023. Wenn leer, wird das früheste verfügbare Jahr automatisch erkannt."
+        },
+        "energy_community": {
+          "name": "Energiegemeinschaft",
+          "description": "Statt des Verbrauchs Eigendeckung und Restnetzbezug nachladen. Das braucht eine Anfrage pro Tag in der Energiegemeinschaft und kann daher länger dauern."
         }
       }
     }

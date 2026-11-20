@@ -6,16 +6,21 @@ import logging
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from functools import partial
+from itertools import pairwise
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from freezegun.api import FrozenDateTimeFactory
 from homeassistant.components.recorder.models import StatisticData
 from homeassistant.components.recorder.statistics import async_add_external_statistics, get_metadata
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.components.recorder.common import async_wait_recording_done
 
 from custom_components.netz_noe_smartmeter.api import (
+    DayResponse,
+    EnergyCommunityValues,
     NetzNoeApiError,
     NetzNoeAuthError,
     NetzNoeLoginError,
@@ -25,16 +30,20 @@ from custom_components.netz_noe_smartmeter.api import (
 )
 from custom_components.netz_noe_smartmeter.const import CONF_STATISTIC_ID, DOMAIN, LEGACY_STATISTIC_ID
 from custom_components.netz_noe_smartmeter.statistics import (
+    EnergyCommunityDay,
     _aggregate_to_hourly,
     _build_metadata,
     _detect_earliest_data,
     _get_last_sum_and_end,
     _parse_raw_to_intervals,
-    async_apply_statistic_name,
+    async_apply_statistic_names,
+    async_backfill_energy_community_statistics,
     async_backfill_statistics,
     async_get_statistics_diagnostics,
+    async_import_energy_community_statistics,
     async_import_raw_statistics,
     async_statistic_has_data,
+    energy_community_day,
     statistic_id_for,
 )
 
@@ -811,15 +820,17 @@ async def _add_statistics(hass: HomeAssistant) -> None:
     await async_wait_recording_done(hass)
 
 
-async def test_apply_statistic_name(hass: HomeAssistant) -> None:
-    """Test an import without rows writes the entry title into the metadata."""
+async def test_apply_statistic_names(hass: HomeAssistant) -> None:
+    """Test an import without rows writes the entry title into the metadata, without creating EEG statistics."""
     MockConfigEntry(domain=DOMAIN, unique_id=MOCK_METER_ID, title="Einspeisung").add_to_hass(hass)
     statistic_id = statistic_id_for(MOCK_METER_ID)
 
-    async_apply_statistic_name(hass, MOCK_METER_ID)
+    await async_apply_statistic_names(hass, MOCK_METER_ID)
     await async_wait_recording_done(hass)
 
-    metadata = await hass.async_add_executor_job(partial(get_metadata, hass, statistic_ids={statistic_id}))
+    statistic_ids = {statistic_id, f"{statistic_id}_self_coverage", f"{statistic_id}_grid_leftover"}
+    metadata = await hass.async_add_executor_job(partial(get_metadata, hass, statistic_ids=statistic_ids))
+    assert set(metadata) == {statistic_id}
     assert metadata[statistic_id][1]["name"] == "Einspeisung"
     assert await async_statistic_has_data(hass, statistic_id) is False
 
@@ -839,4 +850,359 @@ async def test_statistics_diagnostics(hass: HomeAssistant) -> None:
         "statistic_id": STATISTIC_ID,
         "last_sum": 1.5,
         "last_end": "2025-01-15T11:00:00+00:00",
+        "energy_community": {
+            key: {"statistic_id": f"{STATISTIC_ID}_{key}", "last_sum": 0.0, "last_end": None}
+            for key in ("self_coverage", "grid_leftover")
+        },
     }
+
+
+# ---------------------------------------------------------------------------
+# Energy community statistics
+# ---------------------------------------------------------------------------
+
+SELF_COVERAGE_ID = f"{STATISTIC_ID}_self_coverage"
+GRID_LEFTOVER_ID = f"{STATISTIC_ID}_grid_leftover"
+PATCH_SLEEP = "custom_components.netz_noe_smartmeter.statistics.asyncio.sleep"
+
+
+def _ec_response(slots: int = 96, value: float | None = 0.25) -> DayResponse:
+    """Return a Day response with the same split in every slot: value and twice the value."""
+    return {
+        "meteredValues": [None if value is None else 3 * value] * slots,
+        "selfCoverageValues": [value] * slots,
+        "gridUsageLeftoverValues": [None if value is None else 2 * value] * slots,
+    }
+
+
+def _ec_day(day: date, slots: int = 96) -> EnergyCommunityDay:
+    """Return a day with 0.25 kWh community share and 0.5 kWh remaining grid consumption per slot."""
+    result = energy_community_day(day, _ec_response(slots))
+    assert result is not None
+    return result
+
+
+def _local_midnight_utc(day: date) -> datetime:
+    """Return the start of a local day in UTC."""
+    return dt_util.as_utc(dt_util.start_of_local_day(day))
+
+
+def _imports_by_statistic(mock_add: MagicMock) -> dict[str, tuple[str, list[StatisticData]]]:
+    """Return the name and rows of each import, keyed by statistic ID."""
+    return {call.args[1]["statistic_id"]: (call.args[1]["name"], call.args[2]) for call in mock_add.call_args_list}
+
+
+async def _run_import(
+    hass: HomeAssistant,
+    *,
+    imported_until: date | None = None,
+    fetch_day: AsyncMock | None = None,
+    newest: EnergyCommunityDay | None = None,
+) -> tuple[MagicMock, AsyncMock]:
+    """Import up to 14 Nov 2026 with both statistics imported until the start of a day; return the mocks.
+
+    The sums so far are 10 kWh community share and 20 kWh remaining grid consumption.
+    """
+    fetch_day = fetch_day or AsyncMock(side_effect=_ec_day)
+    last_stats = {}
+    if imported_until is not None:
+        end = _local_midnight_utc(imported_until)
+        last_stats = {SELF_COVERAGE_ID: [{"sum": 10.0, "end": end}], GRID_LEFTOVER_ID: [{"sum": 20.0, "end": end}]}
+    with patch(PATCH_GET_INSTANCE) as mock_inst, patch(PATCH_ADD_STATS) as mock_add:
+        mock_inst.return_value.async_add_executor_job = AsyncMock(return_value=last_stats)
+        await async_import_energy_community_statistics(hass, "meter1", newest or _ec_day(date(2026, 11, 14)), fetch_day)
+    return mock_add, fetch_day
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        {},
+        {"selfCoverageValues": None, "gridUsageLeftoverValues": None},
+        {"selfCoverageValues": [None] * 96, "gridUsageLeftoverValues": [None] * 96},
+    ],
+    ids=["missing", "null", "not_published"],
+)
+def test_energy_community_day_without_split(response: EnergyCommunityValues) -> None:
+    """Test a day without a split, as for meters outside an EEG or before the portal publishes it, gives None."""
+    assert energy_community_day(date(2026, 11, 14), response) is None
+
+
+async def test_import_energy_community_first_import(hass: HomeAssistant) -> None:
+    """Test the first import writes both statistics hourly from local midnight, named after the entry."""
+    MockConfigEntry(domain=DOMAIN, unique_id="meter1", title="Bezug").add_to_hass(hass)
+
+    mock_add, fetch_day = await _run_import(hass)
+
+    fetch_day.assert_not_awaited()
+    imports = _imports_by_statistic(mock_add)
+    assert set(imports) == {SELF_COVERAGE_ID, GRID_LEFTOVER_ID}
+    name, rows = imports[SELF_COVERAGE_ID]
+    assert name == "Bezug Eigendeckung"
+    assert len(rows) == 24
+    assert rows[0]["start"] == _local_midnight_utc(date(2026, 11, 14))
+    assert rows[0]["state"] == pytest.approx(1.0)
+    assert rows[-1]["sum"] == pytest.approx(24.0)
+    name, rows = imports[GRID_LEFTOVER_ID]
+    assert name == "Bezug Restnetzbezug"
+    assert rows[-1]["sum"] == pytest.approx(48.0)
+
+
+async def test_import_energy_community_catches_up_missing_days(hass: HomeAssistant) -> None:
+    """Test days between the last import and the newest day are fetched and imported with the running sum."""
+    mock_add, fetch_day = await _run_import(hass, imported_until=date(2026, 11, 12))
+
+    assert [call.args[0] for call in fetch_day.await_args_list] == [date(2026, 11, 12), date(2026, 11, 13)]
+    imports = _imports_by_statistic(mock_add)
+    _, rows = imports[SELF_COVERAGE_ID]
+    assert len(rows) == 72
+    assert rows[0]["start"] == _local_midnight_utc(date(2026, 11, 12))
+    assert rows[-1]["sum"] == pytest.approx(10.0 + 72)
+    assert imports[GRID_LEFTOVER_ID][1][-1]["sum"] == pytest.approx(20.0 + 144)
+
+
+async def test_import_energy_community_waits_for_late_day(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Test the import stops at a day without a split yet, so the newest day does not skip it for good."""
+    caplog.set_level(logging.DEBUG, logger="custom_components.netz_noe_smartmeter")
+
+    mock_add, fetch_day = await _run_import(
+        hass, imported_until=date(2026, 11, 13), fetch_day=AsyncMock(return_value=None)
+    )
+
+    fetch_day.assert_awaited_once_with(date(2026, 11, 13))
+    mock_add.assert_not_called()
+    assert "No energy community data for 2026-11-13 yet" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("imported_until", "fetched"),
+    [
+        (date(2026, 11, 2), [date(2026, 11, 10), date(2026, 11, 11), date(2026, 11, 12), date(2026, 11, 13)]),
+        (date(2026, 11, 14), []),
+        (date(2026, 11, 15), []),
+    ],
+    ids=["five_days_at_most", "newest_day_next", "up_to_date"],
+)
+async def test_import_energy_community_fetched_days(
+    hass: HomeAssistant, imported_until: date, fetched: list[date]
+) -> None:
+    """Test which days are fetched: at most five days back, so a day without a split cannot block it forever."""
+    mock_add, fetch_day = await _run_import(hass, imported_until=imported_until)
+
+    assert [call.args[0] for call in fetch_day.await_args_list] == fetched
+    assert mock_add.called is (imported_until <= date(2026, 11, 14))
+
+
+async def test_import_energy_community_day_clocks_change(hass: HomeAssistant) -> None:
+    """Test a day with 25 hours (100 slots) fills its hours without a gap or overlap."""
+    day = date(2026, 11, 1)  # clocks go back in the test time zone (US/Pacific)
+
+    mock_add, _ = await _run_import(hass, newest=_ec_day(day, slots=100))
+
+    _, rows = _imports_by_statistic(mock_add)[SELF_COVERAGE_ID]
+    starts = [row["start"] for row in rows]
+    assert len(rows) == 25
+    assert starts[0] == _local_midnight_utc(day)
+    assert starts[-1] == _local_midnight_utc(day + timedelta(days=1)) - timedelta(hours=1)
+    assert all(later - earlier == timedelta(hours=1) for earlier, later in pairwise(starts))
+
+
+async def test_import_energy_community_real_recorder(hass: HomeAssistant) -> None:
+    """Test two polls in a row continue the running sum in the recorder, and a rename reaches both statistics."""
+    fetch_day = AsyncMock()
+    await async_import_energy_community_statistics(hass, "meter1", _ec_day(date(2026, 11, 13)), fetch_day)
+    await async_wait_recording_done(hass)
+    await async_import_energy_community_statistics(hass, "meter1", _ec_day(date(2026, 11, 14)), fetch_day)
+    await async_wait_recording_done(hass)
+
+    fetch_day.assert_not_awaited()
+    end = _local_midnight_utc(date(2026, 11, 15)).isoformat()
+    diagnostics = await async_get_statistics_diagnostics(hass, "meter1")
+    assert diagnostics["energy_community"] == {
+        key: {"statistic_id": f"{STATISTIC_ID}_{key}", "last_sum": pytest.approx(sum_), "last_end": end}
+        for key, sum_ in (("self_coverage", 48.0), ("grid_leftover", 96.0))
+    }
+
+    MockConfigEntry(domain=DOMAIN, unique_id="meter1", title="Bezug").add_to_hass(hass)
+    await async_apply_statistic_names(hass, "meter1")
+    await async_wait_recording_done(hass)
+    metadata = await hass.async_add_executor_job(
+        partial(get_metadata, hass, statistic_ids={SELF_COVERAGE_ID, GRID_LEFTOVER_ID})
+    )
+    assert {meta["name"] for _, meta in metadata.values()} == {"Bezug Eigendeckung", "Bezug Restnetzbezug"}
+
+
+def _year_response(*months_with_split: int) -> dict[str, list[float | None]]:
+    """Return a Year response with a split in the given months."""
+    values: list[float | None] = [1.0 if month in months_with_split else None for month in range(1, 13)]
+    return {"values": [1.0] * 12, "selfCoverageValues": values, "gridUsageLeftoverValues": values}
+
+
+def _ec_backfill_api(years: dict[int, dict]) -> MagicMock:
+    """Return an API with the given Year responses and a split for every day."""
+
+    async def _get_year(_meter_id: str, year: int, *, record_shape: bool = True) -> dict:
+        return years.get(year, _year_response())
+
+    api = MagicMock()
+    api.get_year = AsyncMock(side_effect=_get_year)
+    api.get_day = AsyncMock(return_value=_ec_response())
+    return api
+
+
+async def test_backfill_energy_community(hass: HomeAssistant, freezer: FrozenDateTimeFactory) -> None:
+    """Test the backfill fetches every day of the months with a split up to yesterday and replaces both statistics."""
+    freezer.move_to("2026-02-03 12:00:00-08:00")
+    api = _ec_backfill_api({2026: _year_response(1, 2), 2025: _year_response(12)})
+    progress: list[tuple[str, int, int, int, str]] = []
+
+    def _progress_callback(state: str, chunk: int, total: int, records: int, date_range: str) -> None:
+        progress.append((state, chunk, total, records, date_range))
+
+    with (
+        patch(PATCH_SLEEP, new_callable=AsyncMock),
+        patch(PATCH_ADD_STATS) as mock_add,
+        patch(PATCH_GET_INSTANCE) as mock_inst,
+    ):
+        _mock_clear_statistics_done(mock_inst)
+        result = await async_backfill_energy_community_statistics(
+            hass, api, "meter1", progress_callback=_progress_callback
+        )
+
+    # 2024 has no split, so the walk back stops there
+    assert [call.args[1] for call in api.get_year.await_args_list] == [2026, 2025, 2024]
+    days = [call.args[1] for call in api.get_day.await_args_list]
+    assert days[0] == date(2025, 12, 1)
+    assert days[-1] == date(2026, 2, 2)
+    assert len(days) == 31 + 31 + 2
+    assert all(call.kwargs == {"record_shape": False} for call in api.get_day.await_args_list)
+    assert result == {
+        "total_entries": 64 * 24,
+        "days_fetched": 64,
+        "self_coverage_kwh": 64 * 24.0,
+        "grid_leftover_kwh": 64 * 48.0,
+        "start": str(_local_midnight_utc(date(2025, 12, 1))),
+        "end": str(_local_midnight_utc(date(2026, 2, 3)) - timedelta(hours=1)),
+    }
+    mock_inst.return_value.async_clear_statistics.assert_called_once()
+    assert mock_inst.return_value.async_clear_statistics.call_args.args[0] == [SELF_COVERAGE_ID, GRID_LEFTOVER_ID]
+    assert set(_imports_by_statistic(mock_add)) == {SELF_COVERAGE_ID, GRID_LEFTOVER_ID}
+    assert progress[0] == ("running", 1, 64, 96, "2025-12-01")
+    assert progress[-1] == ("clearing", 64, 64, 64 * 96, "Clearing existing statistics")
+
+
+@pytest.mark.parametrize(
+    ("now", "years", "start_year", "years_requested", "days_fetched"),
+    [
+        ("2026-01-03", {2026: (1,), 2025: (12,)}, 2026, [2026], 2),
+        ("2016-01-03", {2016: (1,), 2015: (12,), 2014: (12,)}, None, [2016, 2015], 31 + 2),
+        ("2026-01-01", {2025: (12,)}, None, [2026, 2025, 2024], 31),
+    ],
+    ids=["start_year", "earliest_year", "new_year"],
+)
+async def test_backfill_energy_community_years(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    now: str,
+    years: dict[int, tuple[int, ...]],
+    start_year: int | None,
+    years_requested: list[int],
+    days_fetched: int,
+) -> None:
+    """Test the walk back ends at the start year or 2015, and on 1 January also takes the year before."""
+    freezer.move_to(f"{now} 12:00:00-08:00")
+    api = _ec_backfill_api({year: _year_response(*months) for year, months in years.items()})
+
+    with patch(PATCH_SLEEP, new_callable=AsyncMock), patch(PATCH_ADD_STATS), patch(PATCH_GET_INSTANCE) as mock_inst:
+        _mock_clear_statistics_done(mock_inst)
+        result = await async_backfill_energy_community_statistics(hass, api, "meter1", start_year=start_year)
+
+    assert [call.args[1] for call in api.get_year.await_args_list] == years_requested
+    assert result.get("days_fetched") == days_fetched
+
+
+@pytest.mark.parametrize("days_have_split", [False, True], ids=["no_months", "no_days"])
+async def test_backfill_energy_community_without_split(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, days_have_split: bool
+) -> None:
+    """Test a meter without a split fails the backfill without touching the statistics."""
+    freezer.move_to("2026-01-03 12:00:00-08:00")
+    api = _ec_backfill_api({2026: _year_response(1)} if days_have_split else {})
+    api.get_day = AsyncMock(return_value=_ec_response(value=None))
+
+    with (
+        patch(PATCH_SLEEP, new_callable=AsyncMock),
+        patch(PATCH_ADD_STATS) as mock_add,
+        patch(PATCH_GET_INSTANCE) as mock_inst,
+    ):
+        result = await async_backfill_energy_community_statistics(hass, api, "meter1")
+
+    assert result == {"error": "No energy community data found"}
+    assert api.get_day.await_count == (2 if days_have_split else 0)
+    mock_inst.return_value.async_clear_statistics.assert_not_called()
+    mock_add.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("error", "attempts"),
+    [(NetzNoeApiError("API error 500"), 3), (NetzNoeMaintenanceError("maintenance"), 1)],
+    ids=["retried", "maintenance"],
+)
+async def test_backfill_energy_community_year_error(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, error: NetzNoeApiError, attempts: int
+) -> None:
+    """Test a failing Year request raises: maintenance at once, like the year detection, other errors after retries."""
+    freezer.move_to("2026-01-03 12:00:00-08:00")
+    api = _ec_backfill_api({})
+    api.get_year = AsyncMock(side_effect=error)
+
+    with patch(PATCH_SLEEP, new_callable=AsyncMock), pytest.raises(NetzNoeApiError):
+        _ = await async_backfill_energy_community_statistics(hass, api, "meter1")
+
+    assert api.get_year.await_count == attempts
+
+
+async def test_backfill_energy_community_day_error(hass: HomeAssistant, freezer: FrozenDateTimeFactory) -> None:
+    """Test a day that keeps failing fails the backfill without touching the statistics."""
+    freezer.move_to("2026-01-03 12:00:00-08:00")
+    api = _ec_backfill_api({2026: _year_response(1)})
+    api.get_day = AsyncMock(side_effect=NetzNoeRateLimitError("API rate limit exceeded"))
+
+    with patch(PATCH_SLEEP, new_callable=AsyncMock), patch(PATCH_ADD_STATS) as mock_add:
+        result = await async_backfill_energy_community_statistics(hass, api, "meter1")
+
+    assert result == {"error": "Energy community backfill failed for 2026-01-01 after 3 retries"}
+    assert api.get_day.await_count == 3
+    mock_add.assert_not_called()
+
+
+async def test_backfill_energy_community_auth_error(hass: HomeAssistant, freezer: FrozenDateTimeFactory) -> None:
+    """Test rejected credentials stop the backfill instead of retrying the login."""
+    freezer.move_to("2026-01-03 12:00:00-08:00")
+    api = _ec_backfill_api({2026: _year_response(1)})
+    api.get_day = AsyncMock(side_effect=NetzNoeAuthError("Invalid username or password"))
+
+    with patch(PATCH_SLEEP, new_callable=AsyncMock), pytest.raises(NetzNoeAuthError):
+        _ = await async_backfill_energy_community_statistics(hass, api, "meter1")
+
+    assert api.get_day.await_count == 1
+
+
+async def test_backfill_energy_community_clear_timeout(hass: HomeAssistant, freezer: FrozenDateTimeFactory) -> None:
+    """Test the backfill fails if the recorder does not confirm clearing the statistics."""
+    freezer.move_to("2026-01-03 12:00:00-08:00")
+    api = _ec_backfill_api({2026: _year_response(1)})
+
+    with (
+        patch(PATCH_SLEEP, new_callable=AsyncMock),
+        patch(PATCH_ADD_STATS) as mock_add,
+        patch(PATCH_GET_INSTANCE) as mock_inst,
+        patch("custom_components.netz_noe_smartmeter.statistics.BACKFILL_CLEAR_CONFIRM_TIMEOUT_SECONDS", 0),
+    ):
+        mock_inst.return_value.async_block_till_done = AsyncMock(return_value=None)
+        result = await async_backfill_energy_community_statistics(hass, api, "meter1")
+
+    assert result == {"error": "Failed to clear existing energy community statistics"}
+    mock_add.assert_not_called()

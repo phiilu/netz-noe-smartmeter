@@ -115,6 +115,11 @@ def describe_response(data: object) -> ResponseShape:
     return type(data).__name__
 
 
+def energy_community_values(response: EnergyCommunityValues) -> tuple[list[float | None], list[float | None]]:
+    """Return the community share and remaining grid consumption values, empty if the portal sent none."""
+    return response.get("selfCoverageValues") or [], response.get("gridUsageLeftoverValues") or []
+
+
 def _total_entry(data: object, endpoint: str) -> dict[str, object]:
     """Return the meter's total from a consumption response.
 
@@ -283,8 +288,8 @@ class NetzNoeApi:
             _LOGGER.debug("Response structure of %s: %s", endpoint, shape)
         return _total_entry(data, endpoint)
 
-    async def get_day(self, meter_id: str, day: date) -> DayResponse:
-        """Fetch 15-min interval data for a single day.
+    async def get_day(self, meter_id: str, day: date, *, record_shape: bool = True) -> DayResponse:
+        """Fetch 15-min interval data for a single day, recording the structure for diagnostics unless told otherwise.
 
         Returns dict with:
           meteredValues: list of 96 float (kWh per 15-min)
@@ -295,7 +300,7 @@ class NetzNoeApi:
             "meterId": meter_id,
             "day": day.isoformat(),
         }
-        return cast(DayResponse, cast(object, await self._get_total(ENDPOINT_DAY, params, record_shape=True)))
+        return cast(DayResponse, cast(object, await self._get_total(ENDPOINT_DAY, params, record_shape=record_shape)))
 
     async def get_raw(self, meter_id: str, start_date: date, end_date: date) -> list[RawRecord]:
         """Fetch raw 15-min records for a date range.
@@ -319,8 +324,12 @@ class NetzNoeApi:
             return cast(list[RawRecord], data_list)
         return []
 
-    async def get_week(self, meter_id: str, start_date: date, end_date: date) -> WeekResponse:
+    async def get_week(
+        self, meter_id: str, start_date: date, end_date: date, *, record_shape: bool = True
+    ) -> WeekResponse:
         """Fetch daily totals for a date range (Week endpoint), end_date exclusive.
+
+        Records the structure for diagnostics unless told otherwise.
 
         Returns dict with:
           meteredValues: list of float|None (kWh per day)
@@ -331,7 +340,7 @@ class NetzNoeApi:
             "startDate": start_date.isoformat(),
             "endDate": end_date.isoformat(),
         }
-        return cast(WeekResponse, cast(object, await self._get_total(ENDPOINT_WEEK, params, record_shape=True)))
+        return cast(WeekResponse, cast(object, await self._get_total(ENDPOINT_WEEK, params, record_shape=record_shape)))
 
     async def get_year(self, meter_id: str, year: int, *, record_shape: bool = True) -> YearResponse:
         """Fetch monthly totals for a year, recording the structure for diagnostics unless told otherwise.

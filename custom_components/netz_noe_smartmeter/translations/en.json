@@ -103,6 +103,10 @@
         "start_year": {
           "name": "Start year",
           "description": "Year to start backfill from, for example 2023. If omitted, the earliest available year is auto-detected."
+        },
+        "energy_community": {
+          "name": "Energy community",
+          "description": "Backfill the energy community share and the remaining grid consumption instead of the consumption. This needs one request per day in the energy community, so it can take a while."
         }
       }
     }

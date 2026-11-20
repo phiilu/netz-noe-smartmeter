@@ -60,10 +60,10 @@ async def test_diagnostics_with_data(hass: HomeAssistant) -> None:
 
     # Coordinator data should be present as a dict
     assert "coordinator_data" in result
+    empty_statistic = {"statistic_id": "**REDACTED**", "last_sum": 0.0, "last_end": None}
     assert result["statistics"] == {
-        "statistic_id": "**REDACTED**",
-        "last_sum": 0.0,
-        "last_end": None,
+        **empty_statistic,
+        "energy_community": {"self_coverage": empty_statistic, "grid_leftover": empty_statistic},
     }
     coordinator_data = result["coordinator_data"]
     assert isinstance(coordinator_data, dict)
