@@ -11,17 +11,17 @@ from freezegun.api import FrozenDateTimeFactory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import MockConfigEntry
-from pytest_homeassistant_custom_component.components.recorder.common import (
+
+from custom_components.netz_noe_smartmeter.const import DOMAIN
+from custom_components.netz_noe_smartmeter.coordinator import NetzNoeCoordinator
+
+from .common import (
+    MockConfigEntry,
     async_wait_recording_done,
     do_adhoc_statistics,
     get_start_time,
     statistics_during_period,
 )
-
-from custom_components.netz_noe_smartmeter.const import DOMAIN
-from custom_components.netz_noe_smartmeter.coordinator import NetzNoeCoordinator
-
 from .conftest import MOCK_CONFIG_DATA, MOCK_METER_ID
 
 PATCH_API_CLS = "custom_components.netz_noe_smartmeter.NetzNoeApi"

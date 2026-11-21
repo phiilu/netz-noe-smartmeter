@@ -9,7 +9,6 @@ import pytest
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.netz_noe_smartmeter.api import NetzNoeApiError, NetzNoeAuthError, NetzNoeMaintenanceError
 from custom_components.netz_noe_smartmeter.config_flow import (
@@ -20,6 +19,7 @@ from custom_components.netz_noe_smartmeter.config_flow import (
 )
 from custom_components.netz_noe_smartmeter.const import CONF_METER_ID, DOMAIN
 
+from .common import MockConfigEntry
 from .conftest import MOCK_CONFIG_DATA, MOCK_METER_ID
 
 PATCH_VALIDATE = "custom_components.netz_noe_smartmeter.config_flow.validate_input"

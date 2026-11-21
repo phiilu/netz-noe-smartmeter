@@ -15,8 +15,6 @@ from homeassistant.components.recorder.models import StatisticData
 from homeassistant.components.recorder.statistics import async_add_external_statistics, get_metadata
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import MockConfigEntry
-from pytest_homeassistant_custom_component.components.recorder.common import async_wait_recording_done
 
 from custom_components.netz_noe_smartmeter.api import (
     DayResponse,
@@ -47,6 +45,7 @@ from custom_components.netz_noe_smartmeter.statistics import (
     statistic_id_for,
 )
 
+from .common import MockConfigEntry, async_wait_recording_done
 from .conftest import MOCK_METER_ID
 
 STATISTIC_ID = statistic_id_for("meter1")
