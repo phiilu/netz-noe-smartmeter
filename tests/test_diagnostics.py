@@ -5,7 +5,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from homeassistant.core import HomeAssistant
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.netz_noe_smartmeter.const import DOMAIN
 from custom_components.netz_noe_smartmeter.coordinator import NetzNoeCoordinator, NetzNoeData
@@ -14,6 +13,7 @@ from custom_components.netz_noe_smartmeter.diagnostics import (
     async_get_config_entry_diagnostics,
 )
 
+from .common import MockConfigEntry
 from .conftest import MOCK_CONFIG_DATA, MOCK_METER_ID
 
 

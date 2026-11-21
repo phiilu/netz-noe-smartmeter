@@ -1,6 +1,6 @@
 services:
   homeassistant:
-    image: ghcr.io/home-assistant/home-assistant:2026.10.3
+    image: ghcr.io/home-assistant/home-assistant:2026.11.2
     container_name: ha-dev
     ports:
       - "8124:8123"
@@ -11,7 +11,8 @@ services:
       - TZ=Europe/Vienna
     restart: "no"
 
-  # HACS end-to-end: `docker compose --profile hacs up -d hacs`, then install the integration through HACS
+  # HACS end-to-end: `docker compose --profile hacs up -d hacs`, then install the integration through HACS.
+  # HACS only runs before 2026.11, which moved it into the Marketplace, so renovate.json keeps this one on 2026.10.
   hacs:
     image: ghcr.io/home-assistant/home-assistant:2026.10.3
     container_name: ha-hacs

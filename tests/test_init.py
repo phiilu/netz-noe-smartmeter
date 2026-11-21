@@ -16,14 +16,13 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
-from pytest_homeassistant_custom_component.common import MockConfigEntry
-from pytest_homeassistant_custom_component.components.recorder.common import async_wait_recording_done
 
 from custom_components.netz_noe_smartmeter.api import NetzNoeAuthError
 from custom_components.netz_noe_smartmeter.const import CONF_STATISTIC_ID, DOMAIN, LEGACY_STATISTIC_ID
 from custom_components.netz_noe_smartmeter.sensor import ENERGY_COMMUNITY_SENSORS
 from custom_components.netz_noe_smartmeter.statistics import statistic_id_for
 
+from .common import MockConfigEntry, async_wait_recording_done
 from .conftest import (
     MOCK_CONFIG_DATA,
     MOCK_EEG_RESPONSES,

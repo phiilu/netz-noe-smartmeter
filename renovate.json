@@ -3,7 +3,9 @@
   "extends": [
     "config:recommended"
   ],
-  "dependencyDashboard": true,
+  "dependencyDashboard": {
+    "enabled": true
+  },
   "labels": [
     "dependencies"
   ],
@@ -54,12 +56,27 @@
       "groupName": "python dev dependencies"
     },
     {
-      "description": "Dev HA image and test harness pin the same Home Assistant version, update together",
+      "description": "Dev HA image and test package pin the same Home Assistant version, update together",
       "matchPackageNames": [
         "ghcr.io/home-assistant/home-assistant",
-        "pytest-homeassistant-custom-component"
+        "pytest-homeassistant"
       ],
       "groupName": "home assistant"
+    },
+    {
+      "description": "ghcr.io gives Renovate no release dates, so minimumReleaseAge would hold the image back for good",
+      "matchPackageNames": [
+        "ghcr.io/home-assistant/home-assistant"
+      ],
+      "minimumReleaseAge": null
+    },
+    {
+      "description": "HACS test instance stays on 2026.10, HACS only runs before Home Assistant 2026.11",
+      "matchPackageNames": [
+        "ghcr.io/home-assistant/home-assistant"
+      ],
+      "matchCurrentValue": "/^2026\\.10\\./",
+      "enabled": false
     }
   ]
 }

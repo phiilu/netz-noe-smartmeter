@@ -12,7 +12,6 @@ from freezegun.api import FrozenDateTimeFactory
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import UpdateFailed
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.netz_noe_smartmeter.api import (
     NetzNoeApi,
@@ -26,6 +25,7 @@ from custom_components.netz_noe_smartmeter.const import DOMAIN
 from custom_components.netz_noe_smartmeter.coordinator import EnergyCommunitySplit, NetzNoeCoordinator, NetzNoeData
 from custom_components.netz_noe_smartmeter.statistics import EnergyCommunityDay
 
+from .common import MockConfigEntry
 from .conftest import (
     MOCK_CONFIG_DATA,
     MOCK_DAY_RESPONSE,
