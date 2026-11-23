@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.4.0](https://github.com/phiilu/netz-noe-smartmeter/compare/v0.3.1...v0.4.0) (2026-11-23)
+
+
+### Features
+
+* add energy community (EEG) sensors ([#49](https://github.com/phiilu/netz-noe-smartmeter/issues/49)) ([966673e](https://github.com/phiilu/netz-noe-smartmeter/commit/966673e4ae3f8ba2e9e70a1a4c3dbc70cae243fc))
+* import the energy community split as hourly statistics ([#52](https://github.com/phiilu/netz-noe-smartmeter/issues/52)) ([34304bb](https://github.com/phiilu/netz-noe-smartmeter/commit/34304bbcf39875f84ea2bf3243ea78a3ddd55b3a))
+
+
+### Bug Fixes
+
+* say which statistics the backfill clears ([#55](https://github.com/phiilu/netz-noe-smartmeter/issues/55)) ([2895120](https://github.com/phiilu/netz-noe-smartmeter/commit/2895120d2fbb2bf5be8c880c7dc946b57508eec5))
+
+
+### Documentation
+
+* keep the EEG sensors out of the Energy Dashboard ([#51](https://github.com/phiilu/netz-noe-smartmeter/issues/51)) ([ae7da51](https://github.com/phiilu/netz-noe-smartmeter/commit/ae7da5141f186c3577e480166f9d64d5ec5af07b))
+
 ## [0.3.1](https://github.com/phiilu/netz-noe-smartmeter/compare/v0.3.0...v0.3.1) (2026-11-02)
 
 
