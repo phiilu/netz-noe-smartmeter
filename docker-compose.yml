@@ -1,6 +1,6 @@
 services:
   homeassistant:
-    image: ghcr.io/home-assistant/home-assistant:2026.11.2
+    image: ghcr.io/home-assistant/home-assistant:2026.11.3
     container_name: ha-dev
     ports:
       - "8124:8123"
